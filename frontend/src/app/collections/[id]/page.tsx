@@ -218,6 +218,12 @@ export default function CollectionOptimizationPage() {
                 </div>
                 <div className="flex gap-4">
                     <div className="text-right">
+                        <div className="text-xs text-gray-400">Modelo</div>
+                        <div className="text-sm font-mono text-purple-400">
+                            {(collection as any).subject_model || "gpt-4o"}
+                        </div>
+                    </div>
+                    <div className="text-right">
                         <div className="text-xs text-gray-400">Melhor Score</div>
                         <div className="text-xl font-bold text-green-400">
                             {runs.reduce((max, r) => Math.max(max, r.score), 0)}/100

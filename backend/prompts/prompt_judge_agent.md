@@ -73,10 +73,11 @@ Avaliar a conversa em 5 dimensões e fornecer um relatório estruturado.
 
 **Verifique:**
 - [ ] O tom está apropriado para o contexto?
-- [ ] As mensagens são claras e fáceis de entender?
-- [ ] A linguagem está adequada ao público-alvo?
+- [ ] As mensagens são curtas e dinâmicas (estilo WhatsApp)?
+- [ ] O agente usou formatação proibida (negrito **, itálico *, markdown)?
 - [ ] As respostas são naturais (não robóticas)?
 - [ ] Erros gramaticais ou de português?
+- [ ] O agente evita "textões" (blocos de texto muito longos)?
 
 **Scoring:**
 - **90-100 pontos:** Comunicação excelente, natural, apropriada
@@ -254,8 +255,8 @@ Agent: Prazer João! Como posso ajudar?
     "compliance": {
       "score": 0,
       "violacoes_criticas": ["Revelou ser IA/assistente virtual na linha 2"],
-      "violacoes_menores": ["Não coletou telefone"],
-      "comentario": "VIOLAÇÃO CRÍTICA: Agente admitiu ser assistente virtual, violando regra inviolável."
+      "violacoes_menores": ["Usou markdown (negrito) desnecessariamente", "Mensagem muito longa"],
+      "comentario": "VIOLAÇÃO CRÍTICA: Agente admitiu ser assistente virtual. Falha de formatação: usou negrito estilo email."
     },
     ...
   },

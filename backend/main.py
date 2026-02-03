@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from models import TestConfig, EvaluationResult
-from agents import create_subject_agent, create_evaluator_agent, create_judge_agent
+from agents import create_subject_agent, create_evaluator_agent, create_judge_agent, AVAILABLE_MODELS
 from database import (
     create_collection, 
     get_collections, 
@@ -41,6 +41,13 @@ app.add_middleware(
 @app.get("/")
 def read_root():
     return {"message": "QA Master Backend está rodando"}
+
+# --- Endpoint para listar modelos disponíveis ---
+
+@app.get("/api/models")
+def list_available_models():
+    """Retorna a lista de modelos OpenAI disponíveis para teste"""
+    return {"models": AVAILABLE_MODELS}
 
 # --- Endpoints de CRUD de Coleções ---
 
@@ -139,7 +146,9 @@ async def run_optimization_stream(collection_id: str):
 
             # --- EXECUTAR TESTE (Mesma lógica do run_test_stream anterior) ---
             try:
-                subject = create_subject_agent(config)
+                # Usa o modelo selecionado na collection (ou gpt-4o por padrão)
+                model_id = collection.get("subject_model", "gpt-4o")
+                subject = create_subject_agent(config, model_id=model_id)
                 evaluator = create_evaluator_agent(config)
                 judge = create_judge_agent(config)
                 
@@ -202,16 +211,26 @@ async def run_optimization_stream(collection_id: str):
                     yield f"data: {json.dumps({'type': 'done', 'reason': 'target_reached'})}\n\n"
                     break
                 
+                # --- ATUALIZAR MELHOR PROMPT (Rastreamento Histórico) ---
+                # Inicializa na primeira iteração se necessário (fora do loop seria ideal, mas aqui tbm funciona)
+                if 'best_score' not in locals():
+                    best_score = -1
+                    best_subject_instruction = current_subject_instruction
+
+                if score > best_score:
+                    best_score = score
+                    best_subject_instruction = current_subject_instruction
+                    yield f"data: {json.dumps({'type': 'status', 'content': f'Novo melhor score: {score}!'})}\n\n"
+                elif score < best_score:
+                     yield f"data: {json.dumps({'type': 'status', 'content': f'Score caiu ({score} < {best_score}). Otimizador usará o melhor histórico como referência.'})}\n\n"
+
                 # --- OTIMIZAÇÃO (Se não atingiu score) ---
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Otimizando prompt...'})}\n\n"
                 
-                opt_agent = create_optimizer_agent(current_subject_instruction, result_data) # result_data é o objeto Pydantic ou dict
+                # Passa o melhor prompt histórico para o otimizador usar de base comparativa
+                opt_agent = create_optimizer_agent(current_subject_instruction, result_data, best_prompt=best_subject_instruction)
                 
-                # Agno precisa do objeto Pydantic para tipagem correta na função auxiliar, 
-                # mas aqui result_data já deve ser o objeto se judge.run retornou com output_schema.
-                # Se não, precisamos converter. Vamos assumir que está certo pois funcionou no teste anterior.
-                
-                new_prompt = generate_improved_prompt(opt_agent, current_subject_instruction, result_data)
+                new_prompt = generate_improved_prompt(opt_agent, current_subject_instruction, result_data, best_prompt=best_subject_instruction)
                 
                 current_subject_instruction = new_prompt
                 current_iteration += 1

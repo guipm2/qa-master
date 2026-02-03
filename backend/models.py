@@ -46,7 +46,9 @@ class QualityAnalysis(BaseModel):
     tom: str = Field(..., description="apropriado/inapropriado")
     clareza: str = Field(..., description="alta/média/baixa")
     naturalidade: str = Field(..., description="natural/mecânica/robótica")
+    formatacao: str = Field(..., description="adequada/inadequada (estilo WhatsApp)")
     erros: List[str] = Field(default_factory=list)
+    problemas_formatacao: List[str] = Field(default_factory=list, description="Ex: usou negrito, texto longo, lista numeral")
     comentario: str
 
 class UXAnalysis(BaseModel):

@@ -16,6 +16,7 @@ interface Collection {
   base_evaluator_instruction?: string;
   max_turns?: number;
   num_personas?: number;
+  subject_model?: string;
 }
 
 export default function DashboardPage() {
@@ -33,10 +34,25 @@ export default function DashboardPage() {
   const [evaluatorPrompt, setEvaluatorPrompt] = useState("Você é um Testador QA.");
   const [maxTurns, setMaxTurns] = useState(20);
   const [numPersonas, setNumPersonas] = useState(5);
+  const [subjectModel, setSubjectModel] = useState("gpt-4.1");
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
 
   useEffect(() => {
     fetchCollections();
+    fetchModels();
   }, []);
+
+  const fetchModels = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/api/models");
+      const data = await res.json();
+      setAvailableModels(data.models || []);
+    } catch (err) {
+      console.error("Erro ao buscar modelos:", err);
+      // Fallback para lista padrão
+      setAvailableModels(["gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]);
+    }
+  };
 
   const fetchCollections = async () => {
     setIsLoading(true);
@@ -61,7 +77,8 @@ export default function DashboardPage() {
       base_subject_instruction: subjectPrompt,
       base_evaluator_instruction: evaluatorPrompt,
       max_turns: maxTurns,
-      num_personas: numPersonas
+      num_personas: numPersonas,
+      subject_model: subjectModel
     };
 
     if (apiKey) payload.openai_api_key = apiKey;
@@ -121,6 +138,7 @@ export default function DashboardPage() {
     setEvaluatorPrompt(col.base_evaluator_instruction || "");
     setMaxTurns(col.max_turns || 20);
     setNumPersonas(col.num_personas || 5);
+    setSubjectModel(col.subject_model || "gpt-4o");
     setShowModal(true);
   };
 
@@ -138,6 +156,7 @@ export default function DashboardPage() {
     setEvaluatorPrompt("Você é um Testador QA.");
     setMaxTurns(20);
     setNumPersonas(5);
+    setSubjectModel("gpt-4.1");
   };
 
   const filteredCollections = collections.filter(c =>
@@ -253,6 +272,19 @@ export default function DashboardPage() {
                       OpenAI API Key {editingId && <span className="text-xs text-gray-500">(Deixe em branco para manter a atual)</span>}
                     </label>
                     <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-black border border-gray-700 rounded p-2 focus:border-blue-500 focus:outline-none" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-sm text-gray-400 mb-1">Modelo do Agente</label>
+                    <select
+                      value={subjectModel}
+                      onChange={e => setSubjectModel(e.target.value)}
+                      className="w-full bg-black border border-gray-700 rounded p-2 focus:border-blue-500 focus:outline-none"
+                    >
+                      {availableModels.map(model => (
+                        <option key={model} value={model}>{model}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Modelo OpenAI que será usado para testar o prompt</p>
                   </div>
                   <div>
                     <label className="block text-sm text-gray-400 mb-1">Max Turnos</label>
