@@ -11,7 +11,7 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant", "system", "evaluator", "subject"]
     content: str
 
-# --- Evaluation Models (Matching prompt_judge_agent.md) ---
+# --- Modelos de Avaliação (prompt_judge_agent.md) ---
 
 class Scores(BaseModel):
     compliance: int = Field(..., description="0-100")
@@ -87,3 +87,61 @@ class TestSessionResponse(BaseModel):
     result: Optional[EvaluationResult]
     status: Literal["running", "completed", "failed"]
     error: Optional[str] = None
+
+# --- Modelos para Sistema de Testes com Personas ---
+
+class PersonaTestResult(BaseModel):
+    """Resultado de um teste individual com uma persona"""
+    test_id: str
+    persona_id: str
+    persona_nome: str
+    prompt_teste: str
+    timestamp_inicio: str
+    timestamp_fim: str
+    duracao_segundos: float
+    total_turnos: int
+    finalizado_naturalmente: bool
+    conversa: List[dict]
+    dados_cliente_usados: dict
+    # Avaliação do juiz para este teste específico
+    avaliacao: Optional[EvaluationResult] = None
+
+class PersonaScoreSummary(BaseModel):
+    """Resumo de scores de uma persona"""
+    persona_id: str
+    persona_nome: str
+    scores: Optional[Scores] = None
+    aprovado: bool = False
+    erro: Optional[str] = None
+
+class GeneralAnalysis(BaseModel):
+    """Análise geral consolidando todos os testes com todas as personas"""
+    total_testes: int
+    testes_aprovados: int
+    testes_reprovados: int
+    testes_atencao: int
+    taxa_aprovacao: float
+    score_medio_geral: float
+    scores_medios: Scores
+    personas_com_melhor_desempenho: List[str]
+    personas_com_pior_desempenho: List[str]
+    pontos_fortes_recorrentes: List[str]
+    pontos_fracos_recorrentes: List[str]
+    recomendacoes_prioritarias: List[str]
+    conclusao: str
+
+class ConsolidatedTestResult(BaseModel):
+    """Resultado consolidado de todos os testes com todas as personas"""
+    session_id: str
+    timestamp_inicio: str
+    timestamp_fim: str
+    duracao_total_segundos: float
+    num_personas: int
+    max_turnos_por_teste: int
+    prompt_teste_usado: str
+    # Resultados individuais por persona
+    resultados_por_persona: List[PersonaScoreSummary]
+    # Detalhes completos de cada teste
+    testes_detalhados: List[PersonaTestResult]
+    # Análise geral consolidada
+    analise_geral: GeneralAnalysis

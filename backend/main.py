@@ -1,12 +1,32 @@
 import json
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Dict, Any
 import os
-from fastapi import FastAPI
+import uuid
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from models import TestConfig, ChatMessage, EvaluationResult
+from pydantic import BaseModel
+
+from models import TestConfig, EvaluationResult
 from agents import create_subject_agent, create_evaluator_agent, create_judge_agent
+from database import (
+    create_collection, 
+    get_collections, 
+    get_collection_by_id, 
+    create_test_run, 
+    update_test_run, 
+    get_collection_runs,
+    update_test_run, 
+    get_collection_runs,
+    update_collection,
+    delete_collection,
+    CollectionCreate,
+    CollectionUpdate,
+    TestRunCreate
+)
+
+from optimizer import create_optimizer_agent, generate_improved_prompt
 
 app = FastAPI(title="QA Master Backend")
 
@@ -22,83 +42,191 @@ app.add_middleware(
 def read_root():
     return {"message": "QA Master Backend está rodando"}
 
-@app.post("/api/run-test")
-async def run_test_stream(config: TestConfig):
+# --- Endpoints de CRUD de Coleções ---
+
+@app.get("/api/collections")
+def list_collections():
+    return get_collections()
+
+@app.post("/api/collections")
+def add_collection(data: CollectionCreate):
+    return create_collection(data)
+
+@app.get("/api/collections/{collection_id}")
+def get_collection(collection_id: str):
+    data = get_collection_by_id(collection_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return data
+
+@app.get("/api/collections/{collection_id}/runs")
+def list_collection_runs(collection_id: str):
+    return get_collection_runs(collection_id)
+
+@app.put("/api/collections/{collection_id}")
+def update_collection_endpoint(collection_id: str, data: CollectionUpdate):
+    # Filter out None values
+    updates = {k: v for k, v in data.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    return update_collection(collection_id, updates)
+
+@app.delete("/api/collections/{collection_id}")
+def delete_collection_endpoint(collection_id: str):
+    delete_collection(collection_id)
+    return {"message": "Collection deleted"}
+
+
+# --- Endpoint de Otimização (Loop) ---
+
+@app.post("/api/collections/{collection_id}/run")
+async def run_optimization_stream(collection_id: str):
     """
-    Executa a conversa de teste e transmite os resultados via SSE.
+    Inicia o Loop de Otimização para uma coleção específica.
     """
+    
+    # 1. Buscar dados da Coleção
+    collection = get_collection_by_id(collection_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    # 2. Pega a chave do objeto 'collection' e disponibiliza para a biblioteca Agno
+    os.environ["OPENAI_API_KEY"] = collection["openai_api_key"]
+
     async def event_generator() -> AsyncGenerator[str, None]:
-        # Define a chave da API no ambiente para o Agno usar
-        os.environ["OPENAI_API_KEY"] = config.openai_api_key
         
-        try:
-            # 1. Inicializar Agentes
-            subject = create_subject_agent(config)
-            evaluator = create_evaluator_agent(config)
-            judge = create_judge_agent(config)
-            
-            transcript_str = ""
-            transcript_objs = []
-            
-            last_message = "Comece a conversa."
-            sender = "evaluator" 
+        # Recuperar histórico para saber qual iteração estamos
+        runs = get_collection_runs(collection_id)
+        current_iteration = len(runs) + 1
+        
+        # Determinar prompt inicial (se for 1ª iteração usa base, senão usa o último melhor ou o último gerado)
+        # Lógica simplificada: usa o último gerado, ou o base.
+        if runs:
+            # Pega o último rodado
+            last_run = runs[-1]
+            current_subject_instruction = last_run["subject_instruction"]
+        else:
+            current_subject_instruction = collection["base_subject_instruction"]
 
-            yield f"data: {json.dumps({'type': 'status', 'content': 'Agentes inicializados. Iniciando conversa...'})}\n\n"
+        # Variável para controle do loop (neste endpoint rodaremos APENAS 1 ITERAÇÃO por chamada para simplificar controle UI,
+        # MAS o usuário pediu loop automático. Vamos fazer o loop aqui.)
+        # Limite de segurança
+        MAX_SAFETY_ITERATIONS = 10 
+        TARGET_SCORE = 90
+        
+        iteration_count = 0
 
-            # 2. Loop de Conversa
-            for turn_i in range(config.max_turns * 2):  # *2 porque é ping-pong
+        while iteration_count < MAX_SAFETY_ITERATIONS:
+            
+            yield f"data: {json.dumps({'type': 'status', 'content': f'Iniciando Iteração {current_iteration}...'})}\n\n"
+            
+            # --- SALVAR ESTADO INICIAL NO BANCO (Status Running) ---
+            run_id = str(uuid.uuid4())
+            create_test_run(TestRunCreate(
+                collection_id=collection_id,
+                iteration=current_iteration,
+                status="running",
+                subject_instruction=current_subject_instruction
+            ))
+            
+            # Configuração para criar agentes
+            config = TestConfig(
+                subject_instruction=current_subject_instruction,
+                evaluator_instruction=collection["base_evaluator_instruction"],
+                openai_api_key=collection["openai_api_key"],
+                max_turns=collection["max_turns"]
+            )
+
+            # --- EXECUTAR TESTE (Mesma lógica do run_test_stream anterior) ---
+            try:
+                subject = create_subject_agent(config)
+                evaluator = create_evaluator_agent(config)
+                judge = create_judge_agent(config)
                 
-                if sender == "evaluator":
-                    # Avaliador fala
-                    agent = evaluator
-                    current_role = "evaluator"
-                    prompt = last_message if turn_i > 0 else "Inicie a conversa conforme as instruções. Seja conciso."
+                transcript_str = ""
+                transcript_objs = []
+                last_message = "Comece a conversa."
+                sender = "evaluator" 
+
+                # Transmite que começou
+                yield f"data: {json.dumps({'type': 'iteration_start', 'iteration': current_iteration, 'prompt': current_subject_instruction})}\n\n"
+
+                for turn_i in range(config.max_turns * 2):
+                    if sender == "evaluator":
+                        agent = evaluator
+                        current_role = "evaluator"
+                        prompt = last_message if turn_i > 0 else "Inicie a conversa conforme as instruções. Seja conciso."
+                    else:
+                        agent = subject
+                        current_role = "subject"
+                        prompt = last_message
+
+                    response = agent.run(prompt)
+                    content = response.content
+                    
+                    last_message = content
+                    transcript_str += f"{current_role.upper()}: {content}\n\n"
+                    transcript_objs.append({"role": current_role, "content": content})
+                    
+                    # Yield realtime message (opcional, pode poluir se for muito rápido, mas legal para ver)
+                    yield f"data: {json.dumps({'type': 'message', 'role': current_role, 'content': content})}\n\n"
+                    
+                    sender = "subject" if sender == "evaluator" else "evaluator"
+                    await asyncio.sleep(0.1) # Rápido
+
+                # --- AVALIAÇÃO ---
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Avaliando...'})}\n\n"
+                eval_response = judge.run(f"Transcrição:\n{transcript_str}")
+                result_data = eval_response.content
+                
+                if hasattr(result_data, "model_dump"):
+                    result_json = result_data.model_dump()
                 else:
-                    # Sujeito fala
-                    agent = subject
-                    current_role = "subject"
-                    prompt = last_message
+                    result_json = result_data if isinstance(result_data, dict) else {}
 
-                # Executar Agente
-                response = agent.run(prompt)
-                content = response.content
-                
-                # Atualizar Estado
-                last_message = content
-                transcript_str += f"{current_role.upper()}: {content}\n\n"
-                transcript_objs.append({"role": current_role, "content": content})
-                
-                # Transmitir Mensagem
-                yield f"data: {json.dumps({'type': 'message', 'role': current_role, 'content': content})}\n\n"
-                
-                # Alternar Turno
-                sender = "subject" if sender == "evaluator" else "evaluator"
-                
-                # Pequeno atraso para evitar rate limits ou disparo rápido na UI
-                await asyncio.sleep(0.5)
+                score = result_json.get("scores", {}).get("score_geral", 0)
 
-            # 3. Fase de Avaliação
-            yield f"data: {json.dumps({'type': 'status', 'content': 'Conversa concluída. Gerando avaliação...'})}\n\n"
-            
-            eval_response = judge.run(f"Transcrição:\n{transcript_str}")
-            result_data = eval_response.content  # Deve ser modelo Pydantic convertido em dict automaticamente pelo Agno
-            # Agno retorna objeto 'Response'. Se output_schema está definido, content é o objeto.
-            
-            # Serializar EvaluationResult
-            if hasattr(result_data, "model_dump"):
-                result_json = result_data.model_dump()
-            elif isinstance(result_data, dict):
-                 result_json = result_data
-            else:
-                 # Fallback se algo estranho acontecer (improvável com output_schema)
-                 result_json = {"score": 0, "passed": False, "reasoning": str(result_data), "suggestions": []}
+                # --- ATUALIZAR BANCO (Status Completed) ---
+                update_test_run(run_id, {
+                    "status": "completed",
+                    "transcript": transcript_objs,
+                    "evaluation_result": result_json,
+                    "score": score
+                })
+                
+                yield f"data: {json.dumps({'type': 'result', 'iteration': current_iteration, 'score': score, 'details': result_json})}\n\n"
 
-            yield f"data: {json.dumps({'type': 'result', 'content': result_json})}\n\n"
-            
-            yield f"data: {json.dumps({'type': 'status', 'content': 'Concluído'})}\n\n"
-            
-        except Exception as e:
-            print(f"ERRO em run_test_stream: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+                # --- VERIFICAR CONDIÇÃO DE PARADA ---
+                if score >= TARGET_SCORE:
+                    yield f"data: {json.dumps({'type': 'status', 'content': f'Alvo atingido! Score {score} >= {TARGET_SCORE}. Parando.'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'reason': 'target_reached'})}\n\n"
+                    break
+                
+                # --- OTIMIZAÇÃO (Se não atingiu score) ---
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Otimizando prompt...'})}\n\n"
+                
+                opt_agent = create_optimizer_agent(current_subject_instruction, result_data) # result_data é o objeto Pydantic ou dict
+                
+                # Agno precisa do objeto Pydantic para tipagem correta na função auxiliar, 
+                # mas aqui result_data já deve ser o objeto se judge.run retornou com output_schema.
+                # Se não, precisamos converter. Vamos assumir que está certo pois funcionou no teste anterior.
+                
+                new_prompt = generate_improved_prompt(opt_agent, current_subject_instruction, result_data)
+                
+                current_subject_instruction = new_prompt
+                current_iteration += 1
+                iteration_count += 1
+                
+                yield f"data: {json.dumps({'type': 'optimization', 'new_prompt': new_prompt})}\n\n"
+                await asyncio.sleep(1) 
+
+            except Exception as e:
+                print(f"Erro no loop: {e}")
+                update_test_run(run_id, {"status": "failed"})
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+                break
+        
+        else:
+            yield f"data: {json.dumps({'type': 'done', 'reason': 'max_iterations'})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
