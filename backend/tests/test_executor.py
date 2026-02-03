@@ -120,21 +120,24 @@ def detectar_fim_conversa(conversa: list[dict]) -> bool:
 
 
 def executar_teste_com_persona(
-    prompt_teste_path: str,
+    prompt_teste: str,
     persona_id: str,
     agente_alvo: Agent,
-    max_turnos: int = 20,
-    personas_path: Optional[str] = None
+    max_turnos: int = DEFAULT_MAX_TURNOS,
+    personas_path: Optional[str] = None,
+    is_file_path: bool = False
 ) -> dict:
     """
     Executa 1 teste completo com uma persona específica.
     
     Args:
-        prompt_teste_path: Caminho para arquivo .md do teste
+        prompt_teste: Conteúdo do prompt OU caminho para arquivo .md do teste
         persona_id: ID da persona a usar (ex: "PERSONA_010")
         agente_alvo: Agente sendo testado (ex: Sofia)
-        max_turnos: Máximo de turnos de conversa
+        max_turnos: Máximo de turnos de conversa (padrão: 20)
         personas_path: Caminho para JSON de personas (opcional)
+        is_file_path: Se True, prompt_teste é um caminho de arquivo. 
+                      Se False, prompt_teste é o conteúdo direto do prompt.
     
     Returns:
         Dicionário com resultado do teste:
@@ -155,10 +158,18 @@ def executar_teste_com_persona(
     Example:
         >>> from agno.agent import Agent
         >>> sofia = Agent(description="Sofia SDR", instructions=["..."])
+        >>> # Usando prompt direto (do banco de dados)
+        >>> resultado = executar_teste_com_persona(
+        ...     "Você é um cliente testando o agente...",
+        ...     "PERSONA_010",
+        ...     sofia
+        ... )
+        >>> # Usando arquivo
         >>> resultado = executar_teste_com_persona(
         ...     "prompts_teste/sofia_teste_001.md",
         ...     "PERSONA_010",
-        ...     sofia
+        ...     sofia,
+        ...     is_file_path=True
         ... )
     """
     # Configurar caminho das personas
@@ -167,9 +178,18 @@ def executar_teste_com_persona(
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         personas_path = os.path.join(base_dir, "core", "personas_genericas_puras.json")
     
-    # Validar arquivo de teste
-    if not os.path.exists(prompt_teste_path):
-        raise FileNotFoundError(f"Arquivo de teste não encontrado: {prompt_teste_path}")
+    # Carregar prompt de teste
+    if is_file_path:
+        # Validar arquivo de teste
+        if not os.path.exists(prompt_teste):
+            raise FileNotFoundError(f"Arquivo de teste não encontrado: {prompt_teste}")
+        with open(prompt_teste, "r", encoding="utf-8") as f:
+            prompt_teste_conteudo = f.read()
+        prompt_nome = os.path.basename(prompt_teste)
+    else:
+        # Usar prompt direto (string do banco de dados)
+        prompt_teste_conteudo = prompt_teste
+        prompt_nome = "prompt_from_database"
     
     # Inicializar
     injector = PersonaInjector(personas_path)
@@ -178,13 +198,9 @@ def executar_teste_com_persona(
     # Gerar dados do cliente
     dados_cliente = gerar_dados_cliente_aleatorios()
     
-    # Carregar prompt de teste
-    with open(prompt_teste_path, "r", encoding="utf-8") as f:
-        prompt_teste = f.read()
-    
     # Criar prompt final do testador
     prompt_testador = injector.criar_prompt_testador(
-        seu_prompt=prompt_teste,
+        seu_prompt=prompt_teste_conteudo,
         persona_id=persona_id,
         dados_opcionais=dados_cliente
     )
@@ -288,7 +304,7 @@ def executar_teste_com_persona(
         "test_id": test_id,
         "persona_id": persona_id,
         "persona_nome": persona["nome"],
-        "prompt_teste": os.path.basename(prompt_teste_path),
+        "prompt_teste": prompt_nome,
         "timestamp_inicio": timestamp_inicio,
         "timestamp_fim": timestamp_fim,
         "duracao_segundos": round(duracao, 2),
@@ -304,29 +320,32 @@ def executar_teste_com_persona(
 
 
 def executar_bateria_testes(
-    prompt_teste_path: str,
+    prompt_teste: str,
     persona_ids: list[str],
     agente_alvo: Agent,
-    max_turnos: int = 20,
-    personas_path: Optional[str] = None
+    max_turnos: int = DEFAULT_MAX_TURNOS,
+    personas_path: Optional[str] = None,
+    is_file_path: bool = False
 ) -> list[dict]:
     """
     Executa mesmo teste com múltiplas personas.
     
     Args:
-        prompt_teste_path: Caminho para arquivo .md do teste
+        prompt_teste: Conteúdo do prompt OU caminho para arquivo .md do teste
         persona_ids: Lista de IDs de personas
         agente_alvo: Agente sendo testado
-        max_turnos: Máximo de turnos por teste
+        max_turnos: Máximo de turnos por teste (padrão: 20)
         personas_path: Caminho para JSON de personas (opcional)
+        is_file_path: Se True, prompt_teste é um caminho de arquivo
     
     Returns:
         Lista de resultados (um por persona)
     
     Example:
         >>> personas = ["PERSONA_001", "PERSONA_010", "PERSONA_020"]
+        >>> # Usando prompt do banco
         >>> resultados = executar_bateria_testes(
-        ...     "prompts_teste/sofia_teste_001.md",
+        ...     "Você é um cliente testando...",
         ...     personas,
         ...     sofia_agent
         ... )
@@ -341,11 +360,12 @@ def executar_bateria_testes(
         
         try:
             resultado = executar_teste_com_persona(
-                prompt_teste_path=prompt_teste_path,
+                prompt_teste=prompt_teste,
                 persona_id=persona_id,
                 agente_alvo=agente_alvo,
                 max_turnos=max_turnos,
-                personas_path=personas_path
+                personas_path=personas_path,
+                is_file_path=is_file_path
             )
             resultados.append(resultado)
         except Exception as e:
@@ -481,7 +501,7 @@ def selecionar_personas(
 
 
 def executar_bateria_com_analise_juiz(
-    prompt_teste_path: str,
+    prompt_teste: str,
     num_personas: int = DEFAULT_NUM_PERSONAS,
     agente_alvo: Optional[Agent] = None,
     agente_juiz: Optional[Agent] = None,
@@ -489,7 +509,8 @@ def executar_bateria_com_analise_juiz(
     regras_agente: str = "",
     modo_selecao: str = "aleatorio",
     personas_path: Optional[str] = None,
-    persona_ids: Optional[list[str]] = None
+    persona_ids: Optional[list[str]] = None,
+    is_file_path: bool = False
 ) -> dict:
     """
     Executa bateria de testes com múltiplas personas e análise consolidada do juiz.
@@ -498,7 +519,7 @@ def executar_bateria_com_analise_juiz(
     e no final produz uma análise geral consolidada.
     
     Args:
-        prompt_teste_path: Caminho para arquivo .md do teste
+        prompt_teste: Conteúdo do prompt OU caminho para arquivo .md do teste
         num_personas: Quantidade de personas a usar (1-20)
         agente_alvo: Agente sendo testado (obrigatório)
         agente_juiz: Agente juiz para análise (opcional, cria um se não fornecido)
@@ -507,6 +528,7 @@ def executar_bateria_com_analise_juiz(
         modo_selecao: "aleatorio", "sequencial", ou "diversificado"
         personas_path: Caminho para JSON de personas
         persona_ids: Lista específica de IDs (ignora num_personas e modo_selecao)
+        is_file_path: Se True, prompt_teste é um caminho de arquivo
     
     Returns:
         Dicionário com resultado consolidado:
@@ -524,8 +546,9 @@ def executar_bateria_com_analise_juiz(
         }
     
     Example:
+        >>> # Usando prompt do banco de dados
         >>> resultado = executar_bateria_com_analise_juiz(
-        ...     prompt_teste_path="prompts_teste/sofia_teste_001.md",
+        ...     prompt_teste="Você é um cliente testando...",
         ...     num_personas=5,
         ...     agente_alvo=sofia_agent,
         ...     regras_agente="Nunca revelar ser IA, sempre coletar nome e telefone"
@@ -544,16 +567,18 @@ def executar_bateria_com_analise_juiz(
             personas_path=personas_path
         )
     
+    # Determinar nome do prompt
+    if is_file_path:
+        prompt_nome = os.path.basename(prompt_teste)
+    else:
+        prompt_nome = "prompt_from_database"
+    
     # Inicializar sessão
     session_id = f"SESSION_{uuid.uuid4().hex[:8].upper()}"
     timestamp_inicio = datetime.now().isoformat()
     
     logger.info(f"=== INICIANDO SESSÃO {session_id} ===")
     logger.info(f"Personas: {len(personas_selecionadas)}, Max turnos: {max_turnos}")
-    
-    # Carregar prompt de teste
-    with open(prompt_teste_path, "r", encoding="utf-8") as f:
-        prompt_teste_conteudo = f.read()
     
     # Executar todos os testes primeiro
     logger.info("FASE 1: Executando testes com todas as personas...")
@@ -564,11 +589,12 @@ def executar_bateria_com_analise_juiz(
         
         try:
             resultado = executar_teste_com_persona(
-                prompt_teste_path=prompt_teste_path,
+                prompt_teste=prompt_teste,
                 persona_id=persona_id,
                 agente_alvo=agente_alvo,
                 max_turnos=max_turnos,
-                personas_path=personas_path
+                personas_path=personas_path,
+                is_file_path=is_file_path
             )
             testes_executados.append(resultado)
         except Exception as e:
@@ -778,7 +804,7 @@ Analise esta conversa e forneça a avaliação no formato JSON especificado.
         "duracao_total_segundos": round(duracao_total, 2),
         "num_personas": len(personas_selecionadas),
         "max_turnos_por_teste": max_turnos,
-        "prompt_teste_usado": os.path.basename(prompt_teste_path),
+        "prompt_teste_usado": prompt_nome,
         "resultados_por_persona": resultados_por_persona,
         "testes_detalhados": testes_executados,
         "analise_geral": analise_geral

@@ -90,7 +90,9 @@ def create_test_run(data: TestRunCreate) -> Dict[str, Any]:
 
 def update_test_run(run_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
     response = supabase.table("test_runs").update(updates).eq("id", run_id).execute()
-    return response.data[0]
+    if response.data:
+        return response.data[0]
+    return {"id": run_id, **updates}
 
 def get_collection_runs(collection_id: str) -> List[Dict[str, Any]]:
     response = supabase.table("test_runs").select("*").eq("collection_id", collection_id).order("iteration", desc=False).execute()

@@ -3,7 +3,7 @@ from models import EvaluationResult
 
 def create_optimizer_agent(current_prompt: str, evaluation_result: EvaluationResult) -> Agent:
     """
-    Creates an agent designed to optimize the subject agent's prompt based on feedback.
+    Cria um agente projetado para otimizar o prompt do agente de teste com base no feedback.
     """
     
     system_prompt = f"""
@@ -35,7 +35,7 @@ def create_optimizer_agent(current_prompt: str, evaluation_result: EvaluationRes
     )
 
 def generate_improved_prompt(optimizer_agent: Agent, current_prompt: str, evaluation_result: EvaluationResult) -> str:
-    # Convert EvaluationResult to a readable summary for the LLM
+    # Converte EvaluationResult para um resumo legível para o LLM
     feedback_str = f"""
     --- RESULTADO DA AVALIAÇÃO ---
     Score Geral: {evaluation_result.scores.score_geral}

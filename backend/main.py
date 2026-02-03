@@ -121,13 +121,13 @@ async def run_optimization_stream(collection_id: str):
             yield f"data: {json.dumps({'type': 'status', 'content': f'Iniciando Iteração {current_iteration}...'})}\n\n"
             
             # --- SALVAR ESTADO INICIAL NO BANCO (Status Running) ---
-            run_id = str(uuid.uuid4())
-            create_test_run(TestRunCreate(
+            created_run = create_test_run(TestRunCreate(
                 collection_id=collection_id,
                 iteration=current_iteration,
                 status="running",
                 subject_instruction=current_subject_instruction
             ))
+            run_id = created_run["id"]
             
             # Configuração para criar agentes
             config = TestConfig(
