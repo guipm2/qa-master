@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { Plus, ChevronRight, Layers, Calendar, ArrowRight, Search, Trash2, Edit } from "lucide-react";
+import { Plus, Layers, Calendar, ArrowRight, Search, Trash2, Edit, Send } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import clsx from "clsx";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 interface Collection {
   id: string;
@@ -17,6 +18,17 @@ interface Collection {
   max_turns?: number;
   num_personas?: number;
   subject_model?: string;
+}
+
+interface CollectionPayload {
+  name: string;
+  description: string;
+  base_subject_instruction: string;
+  base_evaluator_instruction: string;
+  max_turns: number;
+  num_personas: number;
+  subject_model: string;
+  openai_api_key?: string;
 }
 
 export default function DashboardPage() {
@@ -34,7 +46,7 @@ export default function DashboardPage() {
   const [evaluatorPrompt, setEvaluatorPrompt] = useState("Você é um Testador QA.");
   const [maxTurns, setMaxTurns] = useState(20);
   const [numPersonas, setNumPersonas] = useState(5);
-  const [subjectModel, setSubjectModel] = useState("gpt-4.1");
+  const [subjectModel, setSubjectModel] = useState("gpt-5.2");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
 
   useEffect(() => {
@@ -44,7 +56,7 @@ export default function DashboardPage() {
 
   const fetchModels = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/models");
+      const res = await fetch(`${API_BASE_URL}/api/models`);
       const data = await res.json();
       setAvailableModels(data.models || []);
     } catch (err) {
@@ -57,7 +69,7 @@ export default function DashboardPage() {
   const fetchCollections = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/collections");
+      const res = await fetch(`${API_BASE_URL}/api/collections`);
       const data = await res.json();
       setCollections(data);
     } catch (err) {
@@ -71,7 +83,7 @@ export default function DashboardPage() {
     if (!newName) return alert("Nome é obrigatório");
     if (!editingId && !apiKey) return alert("API Key é obrigatória para novas coleções");
 
-    const payload: any = {
+    const payload: CollectionPayload = {
       name: newName,
       description: newDesc,
       base_subject_instruction: subjectPrompt,
@@ -85,8 +97,8 @@ export default function DashboardPage() {
 
     try {
       const url = editingId
-        ? `http://127.0.0.1:8000/api/collections/${editingId}`
-        : "http://127.0.0.1:8000/api/collections";
+        ? `${API_BASE_URL}/api/collections/${editingId}`
+        : `${API_BASE_URL}/api/collections`;
 
       const method = editingId ? "PUT" : "POST";
 
@@ -114,7 +126,7 @@ export default function DashboardPage() {
     if (!confirm("Tem certeza que deseja excluir esta coleção? O histórico será perdido.")) return;
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/collections/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/collections/${id}`, {
         method: "DELETE"
       });
       if (res.ok) {
@@ -156,7 +168,7 @@ export default function DashboardPage() {
     setEvaluatorPrompt("Você é um Testador QA.");
     setMaxTurns(20);
     setNumPersonas(5);
-    setSubjectModel("gpt-4.1");
+    setSubjectModel("gpt-5.2");
   };
 
   const filteredCollections = collections.filter(c =>
@@ -184,6 +196,12 @@ export default function DashboardPage() {
               className="w-full bg-gray-900 border border-gray-800 rounded-lg pl-10 pr-4 py-3 text-sm focus:border-blue-500 focus:outline-none transition-colors"
             />
           </div>
+          <Link
+            href="/webhook"
+            className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2 transition-all hover:scale-105 whitespace-nowrap"
+          >
+            <Send className="w-5 h-5" /> Webhook
+          </Link>
           <button
             onClick={openNew}
             className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2 transition-all hover:scale-105 whitespace-nowrap"
