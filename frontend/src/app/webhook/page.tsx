@@ -68,7 +68,7 @@ export default function WebhookPage() {
   const handleSend = async () => {
     if (!url) return;
     if (!validatePayload()) {
-      setError("JSON payload inv\u00e1lido. Verifique a sintaxe.");
+      setError("JSON payload inválido. Verifique a sintaxe.");
       return;
     }
 
@@ -92,7 +92,7 @@ export default function WebhookPage() {
       try {
         body.headers = JSON.parse(customHeaders);
       } catch {
-        setError("Custom headers devem ser um JSON v\u00e1lido. Ex: {\"X-Custom\": \"value\"}");
+        setError("Custom headers devem ser um JSON válido. Ex: {\"X-Custom\": \"value\"}");
         setIsSending(false);
         return;
       }
@@ -114,7 +114,7 @@ export default function WebhookPage() {
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Erro desconhecido";
-      setError(`Erro de conex\u00e3o: ${message}`);
+      setError(`Erro de conexão: ${message}`);
     } finally {
       setIsSending(false);
     }
@@ -183,7 +183,7 @@ export default function WebhookPage() {
 
             {/* Auth */}
             <div className="glass-card p-4">
-              <label className="block text-sm text-gray-400 mb-2">Autentica\u00e7\u00e3o</label>
+              <label className="block text-sm text-gray-400 mb-2">Autenticação</label>
               <select
                 value={authType}
                 onChange={(e) => setAuthType(e.target.value as AuthType)}
@@ -242,7 +242,7 @@ export default function WebhookPage() {
                       : "bg-red-900/50 text-red-400"
                   )}
                 >
-                  {validatePayload() ? "JSON V\u00e1lido" : "JSON Inv\u00e1lido"}
+                  {validatePayload() ? "JSON Válido" : "JSON Inválido"}
                 </span>
               </div>
               <textarea

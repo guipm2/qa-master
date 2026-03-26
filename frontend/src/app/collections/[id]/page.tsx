@@ -196,7 +196,7 @@ export default function CollectionOptimizationPage() {
         setLiveMessages([]);
         setSelectedRun(null);
         setSelectedDocRun(null);
-        addLog("Iniciando Loop de Otimiza\u00e7\u00e3o...", "info");
+        addLog("Iniciando Loop de Otimização...", "info");
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/collections/${id}/run`, { method: "POST" });
@@ -204,7 +204,7 @@ export default function CollectionOptimizationPage() {
             if (!response.body) throw new Error("Sem corpo de resposta");
             await processSSE(response.body, handleEvent);
         } catch (e: unknown) {
-            addLog(`Erro Cr\u00edtico: ${getErrorMessage(e)}`, "error");
+            addLog(`Erro Crítico: ${getErrorMessage(e)}`, "error");
         } finally {
             setIsLooping(false);
             addLog("Loop finalizado.", "info");
@@ -216,14 +216,14 @@ export default function CollectionOptimizationPage() {
     const startDocumentTest = async () => {
         if (isLooping || isDocTesting) return;
         if (documents.length === 0) {
-            addLog("Nenhum documento de refer\u00eancia. Fa\u00e7a upload primeiro.", "error");
+            addLog("Nenhum documento de referência. Faça upload primeiro.", "error");
             return;
         }
         setIsDocTesting(true);
         setLiveMessages([]);
         setSelectedRun(null);
         setSelectedDocRun(null);
-        addLog("Iniciando Teste com Documentos de Refer\u00eancia...", "info");
+        addLog("Iniciando Teste com Documentos de Referência...", "info");
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/collections/${id}/run-document-test`, { method: "POST" });
@@ -275,7 +275,7 @@ export default function CollectionOptimizationPage() {
                 setCurrentIteration(Number(event.iteration ?? 0));
                 setCurrentPrompt(String(event.prompt ?? ""));
                 setLiveMessages([]);
-                addLog(`>>> ITERA\u00c7\u00c3O ${String(event.iteration ?? "")} <<<`, "system");
+                addLog(`>>> ITERAÇÃO ${String(event.iteration ?? "")} <<<`, "system");
                 break;
             case "message":
                 setLiveMessages(prev => [...prev, { role: String(event.role ?? ""), content: String(event.content ?? "") }]);
@@ -289,7 +289,7 @@ export default function CollectionOptimizationPage() {
                 break;
             case "error": addLog(`ERRO: ${String(event.content ?? "")}`, "error"); break;
             case "done":
-                addLog(`CONCLU\u00cdDO: ${String(event.reason ?? "")}`, "success");
+                addLog(`CONCLUÍDO: ${String(event.reason ?? "")}`, "success");
                 setIsLooping(false);
                 break;
         }
@@ -306,7 +306,7 @@ export default function CollectionOptimizationPage() {
                 break;
             case "error": addLog(`ERRO: ${String(event.content ?? "")}`, "error"); break;
             case "done":
-                addLog(`TESTE COM DOCUMENTOS CONCLU\u00cdDO`, "success");
+                addLog(`TESTE COM DOCUMENTOS CONCLUÍDO`, "success");
                 setIsDocTesting(false);
                 break;
         }
@@ -408,7 +408,7 @@ export default function CollectionOptimizationPage() {
             <header className="flex justify-between items-center mb-6 pb-4 border-b border-gray-800">
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2">
-                        <span className="text-blue-500">Cole\u00e7\u00e3o:</span> {collection.name}
+                        <span className="text-blue-500">Coleção:</span> {collection.name}
                     </h1>
                     <p className="text-sm text-gray-500 font-mono mt-1">ID: {collection.id}</p>
                 </div>
@@ -436,13 +436,13 @@ export default function CollectionOptimizationPage() {
                                 ? "bg-gray-800 text-gray-500 cursor-not-allowed"
                                 : "bg-orange-600 hover:bg-orange-500 text-white"
                         )}
-                        title={documents.length === 0 ? "Fa\u00e7a upload de documentos primeiro" : "Testar ader\u00eancia aos documentos"}
+                        title={documents.length === 0 ? "Faça upload de documentos primeiro" : "Testar aderência aos documentos"}
                     >
                         {isDocTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <BookOpen className="w-4 h-4" />}
                         {isDocTesting ? "Testando..." : "Teste Docs"}
                     </button>
 
-                    {/* Otimiza\u00e7\u00e3o */}
+                    {/* Otimização */}
                     <button
                         onClick={startLoop}
                         disabled={isRunning}
@@ -452,17 +452,17 @@ export default function CollectionOptimizationPage() {
                         )}
                     >
                         {isLooping ? <Pause className="w-5 h-5 animate-pulse" /> : <Play className="w-5 h-5" />}
-                        {isLooping ? "Rodando..." : "Iniciar Otimiza\u00e7\u00e3o"}
+                        {isLooping ? "Rodando..." : "Iniciar Otimização"}
                     </button>
                 </div>
             </header>
 
             <div className="flex-1 grid grid-cols-12 gap-4 overflow-hidden">
 
-                {/* ESQUERDA: LOGS + GR\u00c1FICO */}
+                {/* ESQUERDA: LOGS + GRÁFICO */}
                 <div className="col-span-3 flex flex-col gap-4 overflow-hidden">
 
-                    {/* GR\u00c1FICO COMPACTO */}
+                    {/* GRÁFICO COMPACTO */}
                     {runs.length > 0 && (
                         <div className="glass-card p-3 h-24 flex items-end gap-1 overflow-x-auto">
                             {runs.map((run) => (
@@ -554,12 +554,12 @@ export default function CollectionOptimizationPage() {
                                 ) : selectedRun ? (
                                     <>
                                         <CheckCircle className="w-4 h-4" />
-                                        Itera\u00e7\u00e3o {selectedRun.iteration} - {selectedRun.transcript?.length || 0} mensagens
+                                        Iteração {selectedRun.iteration} - {selectedRun.transcript?.length || 0} mensagens
                                     </>
                                 ) : (
                                     <>
                                         <Zap className="w-4 h-4" />
-                                        {currentIteration > 0 ? `Prompt da Itera\u00e7\u00e3o ${currentIteration}` : "Aguardando Execu\u00e7\u00e3o"}
+                                        {currentIteration > 0 ? `Prompt da Iteração ${currentIteration}` : "Aguardando Execução"}
                                     </>
                                 )}
                             </h3>
@@ -578,7 +578,7 @@ export default function CollectionOptimizationPage() {
                             </div>
                         </div>
 
-                        {/* Conte\u00fado */}
+                        {/* Conteúdo */}
                         <div className="flex-1 overflow-y-auto">
                             {/* Modo ao vivo */}
                             {isRunning && liveMessages.length > 0 && (
@@ -607,7 +607,7 @@ export default function CollectionOptimizationPage() {
                                 </div>
                             )}
 
-                            {/* Visualiza\u00e7\u00e3o de Document Test Run */}
+                            {/* Visualização de Document Test Run */}
                             {selectedDocRun && !isRunning && (
                                 <div className="divide-y divide-gray-800">
                                     {/* CHAT */}
@@ -640,12 +640,12 @@ export default function CollectionOptimizationPage() {
                                         )}
                                     </div>
 
-                                    {/* AN\u00c1LISE DE DOCUMENTOS */}
+                                    {/* ANÁLISE DE DOCUMENTOS */}
                                     <div>
                                         <button onClick={() => toggleSection("analysis")} className="w-full p-3 flex items-center justify-between hover:bg-gray-800/50 transition-colors">
                                             <span className="text-sm font-bold text-orange-400 flex items-center gap-2">
                                                 <BookOpen className="w-4 h-4" />
-                                                An\u00e1lise de Ader\u00eancia {selectedDocRun.score !== null && `(Score: ${selectedDocRun.score})`}
+                                                Análise de Aderência {selectedDocRun.score !== null && `(Score: ${selectedDocRun.score})`}
                                             </span>
                                             {expandedSections.analysis ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
                                         </button>
@@ -661,7 +661,7 @@ export default function CollectionOptimizationPage() {
                                                         {selectedDocRun.score || 0}
                                                     </div>
                                                     <div>
-                                                        <div className="text-sm text-gray-300">Score Geral de Ader\u00eancia</div>
+                                                        <div className="text-sm text-gray-300">Score Geral de Aderência</div>
                                                         <div className={clsx(
                                                             "text-xs font-bold px-2 py-0.5 rounded-full mt-1 inline-block",
                                                             selectedDocRun.evaluation_result.resumo?.resultado === "CONFORME"
@@ -682,7 +682,7 @@ export default function CollectionOptimizationPage() {
                                                     </div>
                                                 )}
 
-                                                {/* Scores por dimens\u00e3o */}
+                                                {/* Scores por dimensão */}
                                                 {selectedDocRun.evaluation_result.scores && (
                                                     <div className="grid grid-cols-2 gap-2">
                                                         {Object.entries(selectedDocRun.evaluation_result.scores).map(([key, value]) => (
@@ -700,11 +700,11 @@ export default function CollectionOptimizationPage() {
                                                     </div>
                                                 )}
 
-                                                {/* Gaps Cr\u00edticos */}
+                                                {/* Gaps Críticos */}
                                                 {(selectedDocRun.evaluation_result.resumo?.gaps_criticos?.length ?? 0) > 0 && (
                                                     <div>
                                                         <div className="text-xs font-bold text-red-400 mb-1 flex items-center gap-1">
-                                                            <AlertTriangle className="w-3 h-3" /> Gaps Cr\u00edticos
+                                                            <AlertTriangle className="w-3 h-3" /> Gaps Críticos
                                                         </div>
                                                         <ul className="text-xs text-gray-300 space-y-1">
                                                             {(selectedDocRun.evaluation_result.resumo?.gaps_criticos ?? []).map((g: string, i: number) => (
@@ -738,10 +738,10 @@ export default function CollectionOptimizationPage() {
                                                     </div>
                                                 )}
 
-                                                {/* Recomenda\u00e7\u00f5es para o Prompt */}
+                                                {/* Recomendações para o Prompt */}
                                                 {(selectedDocRun.evaluation_result.resumo?.recomendacoes_prompt?.length ?? 0) > 0 && (
                                                     <div>
-                                                        <div className="text-xs font-bold text-blue-400 mb-1">Recomenda\u00e7\u00f5es para o Prompt</div>
+                                                        <div className="text-xs font-bold text-blue-400 mb-1">Recomendações para o Prompt</div>
                                                         <ul className="text-xs text-gray-300 space-y-1">
                                                             {(selectedDocRun.evaluation_result.resumo?.recomendacoes_prompt ?? []).map((r: string, i: number) => (
                                                                 <li key={i} className="p-2 bg-blue-900/20 border border-blue-800/30 rounded">{r}</li>
@@ -750,10 +750,10 @@ export default function CollectionOptimizationPage() {
                                                     </div>
                                                 )}
 
-                                                {/* An\u00e1lise detalhada por dimens\u00e3o */}
+                                                {/* Análise detalhada por dimensão */}
                                                 {selectedDocRun.evaluation_result.analise && (
                                                     <div className="space-y-3 pt-2 border-t border-gray-800">
-                                                        <div className="text-xs font-bold text-gray-400">An\u00e1lise Detalhada por Dimens\u00e3o</div>
+                                                        <div className="text-xs font-bold text-gray-400">Análise Detalhada por Dimensão</div>
                                                         {Object.entries(selectedDocRun.evaluation_result.analise).map(([key, analysis]) => (
                                                             <details key={key} className="bg-gray-800/30 rounded-lg">
                                                                 <summary className="p-2 text-xs font-bold text-gray-300 cursor-pointer hover:text-white capitalize">
@@ -763,7 +763,7 @@ export default function CollectionOptimizationPage() {
                                                                     {analysis.comentario && <p>{analysis.comentario}</p>}
                                                                     {(analysis.violacoes?.length ?? 0) > 0 && (
                                                                         <div>
-                                                                            <div className="text-red-400 font-bold mb-1">Viola\u00e7\u00f5es:</div>
+                                                                            <div className="text-red-400 font-bold mb-1">Violações:</div>
                                                                             {(analysis.violacoes ?? []).map((v, i: number) => (
                                                                                 <div key={i} className="p-2 bg-red-900/10 border border-red-900/30 rounded mb-1">
                                                                                     <div className="text-red-300 font-bold">[{v.severidade}] {v.regra}</div>
@@ -796,7 +796,7 @@ export default function CollectionOptimizationPage() {
                                 </div>
                             )}
 
-                            {/* Visualiza\u00e7\u00e3o de run de otimiza\u00e7\u00e3o */}
+                            {/* Visualização de run de otimização */}
                             {selectedRun && !isRunning && (
                                 <div className="divide-y divide-gray-800">
                                     {/* CHAT */}
@@ -841,18 +841,18 @@ export default function CollectionOptimizationPage() {
                                         {expandedSections.prompt && (
                                             <div className="p-3 bg-gray-900/30 max-h-64 overflow-y-auto">
                                                 <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono">
-                                                    {selectedRun.subject_instruction || "Prompt n\u00e3o dispon\u00edvel"}
+                                                    {selectedRun.subject_instruction || "Prompt não disponível"}
                                                 </pre>
                                             </div>
                                         )}
                                     </div>
 
-                                    {/* AN\u00c1LISE DO JUIZ */}
+                                    {/* ANÁLISE DO JUIZ */}
                                     <div>
                                         <button onClick={() => toggleSection("analysis")} className="w-full p-3 flex items-center justify-between hover:bg-gray-800/50 transition-colors">
                                             <span className="text-sm font-bold text-yellow-400 flex items-center gap-2">
                                                 <Scale className="w-4 h-4" />
-                                                An\u00e1lise do Juiz {selectedRun.score !== null && `(Score: ${selectedRun.score})`}
+                                                Análise do Juiz {selectedRun.score !== null && `(Score: ${selectedRun.score})`}
                                             </span>
                                             {expandedSections.analysis ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
                                         </button>
@@ -904,7 +904,7 @@ export default function CollectionOptimizationPage() {
                                                                 )}
                                                                 {selectedRun.evaluation_result.resumo.recomendacoes && (
                                                                     <div>
-                                                                        <div className="text-xs font-bold text-blue-400 mb-1">Recomenda\u00e7\u00f5es</div>
+                                                                        <div className="text-xs font-bold text-blue-400 mb-1">Recomendações</div>
                                                                         <ul className="text-xs text-gray-300 space-y-1">
                                                                             {(selectedRun.evaluation_result.resumo?.recomendacoes ?? []).map((p: string, i: number) => (
                                                                                 <li key={i}>• {p}</li>
@@ -916,7 +916,7 @@ export default function CollectionOptimizationPage() {
                                                         )}
                                                     </>
                                                 ) : (
-                                                    <div className="text-gray-600 text-xs text-center py-4">An\u00e1lise n\u00e3o dispon\u00edvel</div>
+                                                    <div className="text-gray-600 text-xs text-center py-4">Análise não disponível</div>
                                                 )}
                                             </div>
                                         )}
@@ -928,7 +928,7 @@ export default function CollectionOptimizationPage() {
                             {!selectedRun && !selectedDocRun && !isRunning && (
                                 <div className="p-4">
                                     <textarea
-                                        value={currentPrompt || "Clique em 'Iniciar Otimiza\u00e7\u00e3o' para come\u00e7ar ou selecione uma itera\u00e7\u00e3o do hist\u00f3rico..."}
+                                        value={currentPrompt || "Clique em 'Iniciar Otimização' para começar ou selecione uma iteração do histórico..."}
                                         readOnly
                                         className="w-full h-full min-h-[300px] bg-transparent text-gray-400 text-sm resize-none font-mono focus:outline-none"
                                     />
@@ -938,7 +938,7 @@ export default function CollectionOptimizationPage() {
                     </div>
                 </div>
 
-                {/* DIREITA: TABS (Hist\u00f3rico / Documentos) */}
+                {/* DIREITA: TABS (Histórico / Documentos) */}
                 <div className="col-span-3 glass-card p-0 flex flex-col overflow-hidden">
                     {/* Tabs */}
                     <div className="flex border-b border-gray-800">
@@ -949,7 +949,7 @@ export default function CollectionOptimizationPage() {
                                 rightTab === "history" ? "bg-gray-900/50 text-blue-400 border-b-2 border-blue-500" : "text-gray-500 hover:text-gray-300"
                             )}
                         >
-                            Hist\u00f3rico
+                            Histórico
                         </button>
                         <button
                             onClick={() => setRightTab("documents")}
@@ -968,7 +968,7 @@ export default function CollectionOptimizationPage() {
                     </div>
 
                     <div className="flex-1 overflow-y-auto">
-                        {/* Tab: Hist\u00f3rico */}
+                        {/* Tab: Histórico */}
                         {rightTab === "history" && (
                             <div className="p-2 space-y-2">
                                 {/* Testes com documentos */}
@@ -1000,7 +1000,7 @@ export default function CollectionOptimizationPage() {
                                                 <div className="text-[10px] text-gray-500 truncate">
                                                     {run.status === "completed"
                                                         ? `${run.transcript?.length || 0} msgs`
-                                                        : run.status === "running" ? "Rodando..." : run.status === "failed" ? "Falhou" : "\u2014"}
+                                                        : run.status === "running" ? "Rodando..." : run.status === "failed" ? "Falhou" : "—"}
                                                 </div>
                                                 <div className="text-[9px] text-gray-600 mt-0.5">
                                                     {new Date(run.created_at).toLocaleString()}
@@ -1011,12 +1011,12 @@ export default function CollectionOptimizationPage() {
                                     </>
                                 )}
 
-                                {/* Otimiza\u00e7\u00f5es */}
+                                {/* Otimizações */}
                                 {runs.length > 0 && (
-                                    <div className="text-[10px] font-bold text-blue-400 px-1 pt-1">OTIMIZA\u00c7\u00d5ES</div>
+                                    <div className="text-[10px] font-bold text-blue-400 px-1 pt-1">OTIMIZAÇÕES</div>
                                 )}
                                 {runs.length === 0 && documentTestRuns.length === 0 && (
-                                    <div className="text-gray-600 text-xs text-center py-4">Sem execu\u00e7\u00f5es</div>
+                                    <div className="text-gray-600 text-xs text-center py-4">Sem execuções</div>
                                 )}
                                 {runs.slice().reverse().map((run) => (
                                     <div
@@ -1041,7 +1041,7 @@ export default function CollectionOptimizationPage() {
                                         <div className="text-[10px] text-gray-500 truncate">
                                             {run.status === "completed"
                                                 ? `${run.transcript?.length || 0} msgs`
-                                                : run.status === "running" ? "Rodando..." : run.status === "failed" ? "Falhou" : "\u2014"}
+                                                : run.status === "running" ? "Rodando..." : run.status === "failed" ? "Falhou" : "—"}
                                         </div>
                                     </div>
                                 ))}
@@ -1082,7 +1082,7 @@ export default function CollectionOptimizationPage() {
                                         <FileText className="w-8 h-8 mx-auto mb-2 text-gray-700" />
                                         Nenhum documento
                                         <br />
-                                        <span className="text-gray-700">Fa\u00e7a upload de playbooks, regras ou blueprints</span>
+                                        <span className="text-gray-700">Faça upload de playbooks, regras ou blueprints</span>
                                     </div>
                                 ) : (
                                     documents.map((doc) => (
