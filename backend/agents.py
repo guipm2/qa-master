@@ -1,14 +1,14 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.db.postgres import PostgresDb
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-from models import TestConfig, EvaluationResult
+from models import TestConfig, EvaluationResult, DocumentEvaluationResult
 
 # Inicialização Singleton do Banco de Dados para evitar conflitos de Metadata
-# Isso garante que a tabela 'agent_memories' seja definida apenas uma vez
 agent_storage = None
 
 # Construção segura da URL do banco a partir das variáveis individuais
@@ -22,13 +22,16 @@ if db_user and db_password and db_host:
     from urllib.parse import quote_plus
     encoded_password = quote_plus(db_password)
     db_url = f"postgresql://{db_user}:{encoded_password}@{db_host}:{db_port}/{db_name}"
-    
+
     agent_storage = PostgresDb(
         db_url=db_url,
         memory_table="agent_memories",
     )
 
-# Modelos disponíveis da OpenAI
+# Modelo Claude usado para todos os agentes auxiliares (avaliador, juiz, otimizador)
+CLAUDE_MODEL_ID = "claude-opus-4-6"
+
+# Modelos disponíveis da OpenAI (para o agente testado)
 AVAILABLE_MODELS = [
     # GPT-5 família (mais recentes)
     "gpt-5.2",
@@ -49,13 +52,22 @@ AVAILABLE_MODELS = [
     "o3-mini"
 ]
 
-def create_subject_agent(config: TestConfig, model_id: str = "gpt-4.1") -> Agent:
+# Default model para o agente testado
+DEFAULT_SUBJECT_MODEL = "gpt-5.2"
+
+
+def _get_claude_model() -> Claude:
+    """Retorna instância do Claude Opus 4.6 para agentes auxiliares."""
+    return Claude(id=CLAUDE_MODEL_ID)
+
+
+def create_subject_agent(config: TestConfig, model_id: str = DEFAULT_SUBJECT_MODEL) -> Agent:
     """
     Cria o agente que está sendo testado (O Sujeito).
-    Aceita o model_id para selecionar qual modelo OpenAI usar.
+    ÚNICO agente que usa OpenAI. Default: gpt-5.2.
     """
     return Agent(
-        model=OpenAIChat(id=model_id),
+        model=OpenAIChat(id=model_id, api_key=config.openai_api_key),
         description="Você é o Assistente de IA sendo testado.",
         instructions=[config.subject_instruction],
         markdown=True,
@@ -63,49 +75,71 @@ def create_subject_agent(config: TestConfig, model_id: str = "gpt-4.1") -> Agent
         update_memory_on_run=True,
     )
 
+
+def _read_prompt(filename: str, fallback: str = "") -> str:
+    """Lê um arquivo de prompt da pasta prompts/."""
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", filename)
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        print(f"AVISO: Não foi possível ler {prompt_path}: {e}")
+        return fallback
+
+
 def create_evaluator_agent(config: TestConfig) -> Agent:
     """
     Cria o agente que conduz o teste (O Avaliador).
-    Usa gpt-4.1 como padrão.
+    Usa Claude Opus 4.6 com prompt especializado de QA.
     """
+    evaluator_prompt = _read_prompt("prompt_evaluator_agent.md")
+
     return Agent(
-        model=OpenAIChat(id="gpt-4.1"),
-        description="Você é o Testador QA avaliando outro agente de IA.",
+        model=_get_claude_model(),
+        description="Você é um Especialista Senior em QA de Agentes Conversacionais.",
         instructions=[
-            config.evaluator_instruction, 
-            "Seu objetivo é testar o outro agente de acordo com suas instruções.",
-            "Interaja sequencialmente. Não gere o relatório final até que a conversa termine."
+            evaluator_prompt,
+            config.evaluator_instruction,
         ],
-        markdown=True,
+        markdown=False,
         db=agent_storage,
         update_memory_on_run=True,
     )
 
+
 def create_judge_agent(config: TestConfig) -> Agent:
     """
-    Um agente especializado de curta duração que analisa a transcrição e produz o relatório final.
-    Usa o modelo padrão do Agno (OpenAIChat gpt-4o).
+    Agente juiz que analisa a transcrição e produz o relatório final.
+    Usa Claude Opus 4.6 com prompt especializado de avaliação.
     """
-    # Define o caminho para o arquivo de prompt
-    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "prompt_judge_agent.md")
-    
-    # Lê o conteúdo do arquivo
-    try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            judge_instructions = f.read()
-    except Exception as e:
-        # Fallback caso o arquivo não seja encontrado
-        print(f"AVISO: Não foi possível ler o prompt do juiz em {prompt_path}: {e}")
-        judge_instructions = (
-            "Analise a conversa a seguir entre um Testador QA e um Agente Sujeito. "
-            "Com base nos objetivos, avalie o desempenho do Agente Sujeito. "
-            "Retorne o resultado no formato JSON especificado. O campo 'reasoning' e 'suggestions' DEVEM estar em Português do Brasil."
-        )
+    judge_instructions = _read_prompt(
+        "prompt_judge_agent.md",
+        "Analise a conversa e avalie o desempenho do Agente Sujeito. Retorne JSON em Português do Brasil."
+    )
 
     return Agent(
-        model=OpenAIChat(id="gpt-4.1"),
-        description="Você é o Juiz Final.",
+        model=_get_claude_model(),
+        description="Você é um Avaliador Senior de Qualidade de Agentes Conversacionais.",
         instructions=[judge_instructions],
         output_schema=EvaluationResult,
+        markdown=False
+    )
+
+
+def create_document_judge_agent() -> Agent:
+    """
+    Agente juiz especializado em avaliar aderência a documentos de referência.
+    Usa Claude Opus 4.6 com prompt especializado de auditoria documental.
+    """
+    judge_instructions = _read_prompt(
+        "prompt_document_judge.md",
+        "Analise a conversa comparando com os documentos de referência. Retorne JSON em Português do Brasil."
+    )
+
+    return Agent(
+        model=_get_claude_model(),
+        description="Você é um Auditor Senior de Conformidade de Agentes de IA.",
+        instructions=[judge_instructions],
+        output_schema=DocumentEvaluationResult,
         markdown=False
     )

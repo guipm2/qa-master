@@ -428,11 +428,12 @@ def executar_matriz_testes(
             
             try:
                 resultado = executar_teste_com_persona(
-                    prompt_teste_path=prompt_path,
+                    prompt_teste=prompt_path,
                     persona_id=persona_id,
                     agente_alvo=agente_alvo,
                     max_turnos=max_turnos,
-                    personas_path=personas_path
+                    personas_path=personas_path,
+                    is_file_path=True,
                 )
                 resultados.append(resultado)
             except Exception as e:

@@ -1,38 +1,114 @@
 import json
 import asyncio
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, Optional, List
 import os
 import uuid
-from fastapi import FastAPI, HTTPException
+import httpx
+from urllib.parse import urlparse
+import ipaddress
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from models import TestConfig, EvaluationResult
-from agents import create_subject_agent, create_evaluator_agent, create_judge_agent, AVAILABLE_MODELS
+from agents import create_subject_agent, create_evaluator_agent, create_judge_agent, create_document_judge_agent, AVAILABLE_MODELS
 from database import (
-    create_collection, 
-    get_collections, 
-    get_collection_by_id, 
-    create_test_run, 
-    update_test_run, 
+    create_collection,
+    get_collections,
+    get_collection_by_id,
+    create_test_run,
+    update_test_run,
     get_collection_runs,
-    update_test_run, 
+    update_test_run,
     get_collection_runs,
     update_collection,
     delete_collection,
     CollectionCreate,
     CollectionUpdate,
-    TestRunCreate
+    TestRunCreate,
+    create_reference_document,
+    get_collection_documents,
+    delete_reference_document,
+    get_documents_by_ids,
+    create_document_test_run,
+    update_document_test_run,
+    get_document_test_runs,
 )
+from document_parser import parse_document
 
 from optimizer import create_optimizer_agent, generate_improved_prompt
+from models import DocumentEvaluationResult
 
 app = FastAPI(title="QA Master Backend")
 
+MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
+
+
+def _get_allowed_origins() -> List[str]:
+    raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins if origins else ["http://localhost:3000"]
+
+
+def _is_private_or_local_host(hostname: str) -> bool:
+    if not hostname:
+        return True
+
+    normalized = hostname.strip().lower()
+    if normalized in {"localhost", "127.0.0.1", "::1"}:
+        return True
+
+    try:
+        ip = ipaddress.ip_address(normalized)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        return normalized.endswith(".local")
+
+
+def _validate_webhook_url(raw_url: str) -> str:
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="URL inválida: use apenas http/https")
+    if not parsed.hostname:
+        raise HTTPException(status_code=400, detail="URL inválida: hostname ausente")
+    if _is_private_or_local_host(parsed.hostname):
+        raise HTTPException(status_code=400, detail="URL bloqueada por segurança (host privado/local)")
+    return raw_url
+
+
+def _to_dict(data: Any) -> Dict[str, Any]:
+    if isinstance(data, dict):
+        return data
+    if hasattr(data, "model_dump"):
+        return data.model_dump()
+    if hasattr(data, "dict"):
+        return data.dict()
+    raise ValueError("Formato de avaliação inválido")
+
+
+def _coerce_standard_evaluation(data: Any) -> EvaluationResult:
+    if isinstance(data, EvaluationResult):
+        return data
+
+    payload = _to_dict(data)
+    if hasattr(EvaluationResult, "model_validate"):
+        return EvaluationResult.model_validate(payload)
+    return EvaluationResult.parse_obj(payload)
+
+
+def _coerce_document_evaluation(data: Any) -> DocumentEvaluationResult:
+    if isinstance(data, DocumentEvaluationResult):
+        return data
+
+    payload = _to_dict(data)
+    if hasattr(DocumentEvaluationResult, "model_validate"):
+        return DocumentEvaluationResult.model_validate(payload)
+    return DocumentEvaluationResult.parse_obj(payload)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,6 +160,72 @@ def delete_collection_endpoint(collection_id: str):
     return {"message": "Collection deleted"}
 
 
+# --- Endpoint de Webhook Dispatcher ---
+
+class WebhookAuthConfig(BaseModel):
+    type: str = "none"  # none, bearer, api_key, basic
+    value: Optional[str] = None
+    header_name: Optional[str] = None  # Para api_key: nome do header (ex: X-API-Key)
+
+class WebhookRequest(BaseModel):
+    url: str
+    method: str = "POST"  # POST, GET, PUT, PATCH, DELETE
+    auth: WebhookAuthConfig = WebhookAuthConfig()
+    headers: Optional[Dict[str, str]] = None
+    payload: Optional[Dict[str, Any]] = None
+
+@app.post("/api/webhook/send")
+async def send_webhook(data: WebhookRequest):
+    """
+    Dispara um payload para qualquer webhook externo.
+    Suporta autenticação Bearer, API Key, Basic Auth ou nenhuma.
+    """
+    webhook_url = _validate_webhook_url(data.url)
+    headers = {"Content-Type": "application/json"}
+
+    # Merge custom headers
+    if data.headers:
+        headers.update(data.headers)
+
+    # Apply auth
+    if data.auth.type == "bearer" and data.auth.value:
+        headers["Authorization"] = f"Bearer {data.auth.value}"
+    elif data.auth.type == "api_key" and data.auth.value:
+        header_name = data.auth.header_name or "X-API-Key"
+        headers[header_name] = data.auth.value
+    elif data.auth.type == "basic" and data.auth.value:
+        import base64
+        encoded = base64.b64encode(data.auth.value.encode()).decode()
+        headers["Authorization"] = f"Basic {encoded}"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(
+                method=data.method.upper(),
+                url=webhook_url,
+                headers=headers,
+                json=data.payload if data.method.upper() in ["POST", "PUT", "PATCH"] else None,
+                params=data.payload if data.method.upper() == "GET" else None,
+            )
+
+        # Try to parse response as JSON
+        try:
+            response_body = response.json()
+        except Exception:
+            response_body = response.text
+
+        return {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": response_body,
+            "elapsed_ms": response.elapsed.total_seconds() * 1000
+        }
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Webhook timeout - o servidor não respondeu em 30s")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Erro de conexão: {str(e)}")
+
+
 # --- Endpoint de Otimização (Loop) ---
 
 @app.post("/api/collections/{collection_id}/run")
@@ -96,9 +238,6 @@ async def run_optimization_stream(collection_id: str):
     collection = get_collection_by_id(collection_id)
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
-
-    # 2. Pega a chave do objeto 'collection' e disponibiliza para a biblioteca Agno
-    os.environ["OPENAI_API_KEY"] = collection["openai_api_key"]
 
     async def event_generator() -> AsyncGenerator[str, None]:
         
@@ -186,14 +325,9 @@ async def run_optimization_stream(collection_id: str):
                 # --- AVALIAÇÃO ---
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Avaliando...'})}\n\n"
                 eval_response = judge.run(f"Transcrição:\n{transcript_str}")
-                result_data = eval_response.content
-                
-                if hasattr(result_data, "model_dump"):
-                    result_json = result_data.model_dump()
-                else:
-                    result_json = result_data if isinstance(result_data, dict) else {}
-
-                score = result_json.get("scores", {}).get("score_geral", 0)
+                result_data = _coerce_standard_evaluation(eval_response.content)
+                result_json = _to_dict(result_data)
+                score = result_data.scores.score_geral
 
                 # --- ATUALIZAR BANCO (Status Completed) ---
                 update_test_run(run_id, {
@@ -226,10 +360,8 @@ async def run_optimization_stream(collection_id: str):
 
                 # --- OTIMIZAÇÃO (Se não atingiu score) ---
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Otimizando prompt...'})}\n\n"
-                
-                # Passa o melhor prompt histórico para o otimizador usar de base comparativa
-                opt_agent = create_optimizer_agent(current_subject_instruction, result_data, best_prompt=best_subject_instruction)
-                
+
+                opt_agent = create_optimizer_agent()
                 new_prompt = generate_improved_prompt(opt_agent, current_subject_instruction, result_data, best_prompt=best_subject_instruction)
                 
                 current_subject_instruction = new_prompt
@@ -245,6 +377,230 @@ async def run_optimization_stream(collection_id: str):
                 yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
                 break
         
+        else:
+            yield f"data: {json.dumps({'type': 'done', 'reason': 'max_iterations'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# --- Endpoints de Documentos de Referência ---
+
+@app.post("/api/collections/{collection_id}/documents")
+async def upload_document(collection_id: str, file: UploadFile = File(...)):
+    """Upload de documento de referência (PDF, MD, TXT) para uma coleção."""
+    collection = get_collection_by_id(collection_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    allowed_extensions = [".pdf", ".md", ".markdown", ".txt"]
+    filename = file.filename or "unknown"
+    if not any(filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(status_code=400, detail=f"Tipo de arquivo não suportado. Use: {', '.join(allowed_extensions)}")
+
+    file_bytes = await file.read()
+    file_size = len(file_bytes)
+    if file_size > MAX_DOCUMENT_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail=f"Arquivo muito grande. Limite: {MAX_DOCUMENT_SIZE_BYTES // (1024 * 1024)}MB")
+
+    try:
+        content_text = parse_document(filename, file_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro ao processar documento: {str(e)}")
+
+    if not content_text.strip():
+        raise HTTPException(status_code=400, detail="Documento vazio ou sem texto extraível")
+
+    file_type = filename.rsplit(".", 1)[-1].lower()
+    doc = create_reference_document(collection_id, filename, file_type, content_text, file_size)
+    return doc
+
+
+@app.get("/api/collections/{collection_id}/documents")
+def list_documents(collection_id: str):
+    """Lista todos os documentos de referência de uma coleção."""
+    return get_collection_documents(collection_id)
+
+
+@app.delete("/api/documents/{document_id}")
+def remove_document(document_id: str):
+    """Remove um documento de referência."""
+    delete_reference_document(document_id)
+    return {"message": "Documento removido"}
+
+
+# --- Endpoint de Teste Baseado em Documentos ---
+
+@app.get("/api/collections/{collection_id}/document-test-runs")
+def list_document_test_runs(collection_id: str):
+    """Lista todos os testes baseados em documentos de uma coleção."""
+    return get_document_test_runs(collection_id)
+
+
+@app.post("/api/collections/{collection_id}/run-document-test")
+async def run_document_test(collection_id: str):
+    """
+    Executa loop de teste + otimização comparando o agente com documentos de referência.
+    Document Judge avalia -> Optimizer corrige prompt -> repete até score alvo ou max iterações.
+    """
+    collection = get_collection_by_id(collection_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    documents = get_collection_documents(collection_id)
+    if not documents:
+        raise HTTPException(status_code=400, detail="Nenhum documento de referência encontrado. Faça upload de documentos antes de rodar o teste.")
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        current_subject_instruction = collection["base_subject_instruction"]
+        doc_ids = [doc["id"] for doc in documents]
+        doc_names = [doc["filename"] for doc in documents]
+
+        # Concatenar conteúdo dos documentos
+        documents_context = ""
+        for doc in documents:
+            documents_context += f"\n\n{'='*60}\n"
+            documents_context += f"DOCUMENTO: {doc['filename']}\n"
+            documents_context += f"{'='*60}\n"
+            documents_context += doc["content_text"]
+            documents_context += f"\n{'='*60}\n"
+
+        yield f"data: {json.dumps({'type': 'status', 'content': f'Iniciando loop de teste com {len(documents)} documento(s) de referência...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'status', 'content': f'Documentos: {chr(44).join(doc_names)}'})}\n\n"
+
+        MAX_SAFETY_ITERATIONS = 10
+        TARGET_SCORE = 80
+        iteration_count = 0
+        best_score = -1
+        best_subject_instruction = current_subject_instruction
+
+        while iteration_count < MAX_SAFETY_ITERATIONS:
+            current_iteration = iteration_count + 1
+
+            yield f"data: {json.dumps({'type': 'iteration_start', 'iteration': current_iteration, 'prompt': current_subject_instruction})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'content': f'Iteração {current_iteration} — Executando conversa...'})}\n\n"
+
+            # Criar registro no banco
+            run_record = create_document_test_run(collection_id, current_subject_instruction, doc_ids)
+            run_id = run_record["id"]
+
+            try:
+                # Criar agentes
+                config = TestConfig(
+                    subject_instruction=current_subject_instruction,
+                    evaluator_instruction=collection["base_evaluator_instruction"],
+                    openai_api_key=collection["openai_api_key"],
+                    max_turns=collection["max_turns"]
+                )
+
+                model_id = collection.get("subject_model", "gpt-5.2")
+                subject = create_subject_agent(config, model_id=model_id)
+                evaluator = create_evaluator_agent(config)
+
+                # Executar conversa
+                transcript_str = ""
+                transcript_objs = []
+                last_message = "Comece a conversa."
+                sender = "evaluator"
+
+                for turn_i in range(config.max_turns * 2):
+                    if sender == "evaluator":
+                        agent = evaluator
+                        current_role = "evaluator"
+                        prompt = last_message if turn_i > 0 else "Inicie a conversa conforme as instruções. Seja conciso."
+                    else:
+                        agent = subject
+                        current_role = "subject"
+                        prompt = last_message
+
+                    response = agent.run(prompt)
+                    content = response.content
+
+                    last_message = content
+                    transcript_str += f"{current_role.upper()}: {content}\n\n"
+                    transcript_objs.append({"role": current_role, "content": content})
+
+                    yield f"data: {json.dumps({'type': 'message', 'role': current_role, 'content': content})}\n\n"
+
+                    sender = "subject" if sender == "evaluator" else "evaluator"
+                    await asyncio.sleep(0.1)
+
+                # --- AVALIAÇÃO com Document Judge ---
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Analisando aderência aos documentos...'})}\n\n"
+
+                document_judge = create_document_judge_agent()
+
+                judge_input = f"""
+--- DOCUMENTOS DE REFERÊNCIA (GABARITO) ---
+{documents_context}
+
+--- PROMPT ATUAL DO AGENTE ---
+{current_subject_instruction}
+
+--- CONVERSA COMPLETA ---
+{transcript_str}
+
+Analise a conversa comparando com os documentos de referência acima.
+Avalie cada dimensão conforme as instruções.
+"""
+
+                eval_response = document_judge.run(judge_input)
+                result_data = _coerce_document_evaluation(eval_response.content)
+                result_json = _to_dict(result_data)
+                result_json["documentos_utilizados"] = doc_names
+                result_data = _coerce_document_evaluation(result_json)
+                result_json = _to_dict(result_data)
+                score = result_data.scores.score_geral
+
+                # Salvar no banco
+                update_document_test_run(run_id, {
+                    "status": "completed",
+                    "transcript": transcript_objs,
+                    "evaluation_result": result_json,
+                    "score": score
+                })
+
+                yield f"data: {json.dumps({'type': 'result', 'iteration': current_iteration, 'score': score, 'details': result_json})}\n\n"
+
+                # --- VERIFICAR CONDIÇÃO DE PARADA ---
+                if score >= TARGET_SCORE:
+                    yield f"data: {json.dumps({'type': 'status', 'content': f'Alvo atingido! Score {score} >= {TARGET_SCORE}. Parando.'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'reason': 'target_reached'})}\n\n"
+                    break
+
+                # --- RASTREAMENTO DO MELHOR PROMPT ---
+                if score > best_score:
+                    best_score = score
+                    best_subject_instruction = current_subject_instruction
+                    yield f"data: {json.dumps({'type': 'status', 'content': f'Novo melhor score: {score}!'})}\n\n"
+                elif score < best_score:
+                    yield f"data: {json.dumps({'type': 'status', 'content': f'Score caiu ({score} < {best_score}). Otimizador usará o melhor histórico.'})}\n\n"
+
+                # --- OTIMIZAÇÃO com feedback do Document Judge + documentos ---
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Otimizando prompt com base nos documentos e avaliação...'})}\n\n"
+
+                opt_agent = create_optimizer_agent()
+                new_prompt = generate_improved_prompt(
+                    opt_agent,
+                    current_subject_instruction,
+                    result_data,
+                    best_prompt=best_subject_instruction,
+                    documents_context=documents_context,
+                )
+
+                current_subject_instruction = new_prompt
+                iteration_count += 1
+
+                yield f"data: {json.dumps({'type': 'optimization', 'new_prompt': new_prompt})}\n\n"
+                await asyncio.sleep(1)
+
+            except Exception as e:
+                print(f"Erro no loop de teste com documentos: {e}")
+                import traceback
+                traceback.print_exc()
+                update_document_test_run(run_id, {"status": "failed"})
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+                break
+
         else:
             yield f"data: {json.dumps({'type': 'done', 'reason': 'max_iterations'})}\n\n"
 

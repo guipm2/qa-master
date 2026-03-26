@@ -147,3 +147,97 @@ class ConsolidatedTestResult(BaseModel):
     testes_detalhados: List[PersonaTestResult]
     # Análise geral consolidada
     analise_geral: GeneralAnalysis
+
+
+# --- Modelos para Document-based Testing ---
+
+class RuleViolation(BaseModel):
+    """Uma violação específica de regra encontrada nos documentos"""
+    regra: str = Field(..., description="A regra do documento que foi violada")
+    severidade: Literal["critica", "media", "baixa"] = Field(..., description="Severidade da violação")
+    trecho_documento: str = Field(..., description="Trecho do documento que define a regra")
+    trecho_resposta: str = Field(..., description="Trecho da resposta do agente que viola a regra")
+    sugestao_correcao: str = Field(..., description="Sugestão de como corrigir no prompt")
+
+class MissingBehavior(BaseModel):
+    """Comportamento obrigatório que não foi executado pelo agente"""
+    comportamento: str = Field(..., description="O comportamento esperado")
+    trecho_documento: str = Field(..., description="Trecho do documento que exige esse comportamento")
+    impacto: Literal["alto", "medio", "baixo"] = Field(..., description="Impacto da ausência")
+    sugestao_correcao: str = Field(..., description="Sugestão de como adicionar ao prompt")
+
+class DocumentComplianceAnalysis(BaseModel):
+    """Análise de aderência geral aos documentos"""
+    score: int = Field(..., description="0-100 - Aderência geral às regras/diretrizes")
+    total_regras_identificadas: int
+    regras_cumpridas: int
+    regras_violadas: int
+    violacoes: List[RuleViolation] = Field(default_factory=list)
+    comentario: str
+
+class ToneStyleAnalysis(BaseModel):
+    """Análise de tom e estilo"""
+    score: int = Field(..., description="0-100 - Match de tom e estilo com os documentos")
+    tom_esperado: str = Field(..., description="Tom definido nos documentos")
+    tom_observado: str = Field(..., description="Tom observado nas respostas do agente")
+    estilo_esperado: str = Field(..., description="Estilo de comunicação esperado")
+    estilo_observado: str = Field(..., description="Estilo de comunicação observado")
+    exemplos_desvio: List[str] = Field(default_factory=list)
+    comentario: str
+
+class ScopeAdherenceAnalysis(BaseModel):
+    """Análise de aderência ao escopo"""
+    score: int = Field(..., description="0-100 - Agente ficou dentro do escopo definido")
+    escopo_definido: str = Field(..., description="Resumo do escopo nos documentos")
+    desvios_escopo: List[str] = Field(default_factory=list, description="Momentos onde o agente saiu do escopo")
+    comportamentos_proibidos_detectados: List[str] = Field(default_factory=list)
+    comentario: str
+
+class PatternAlignmentAnalysis(BaseModel):
+    """Análise de alinhamento com padrões/exemplos dos documentos"""
+    score: int = Field(..., description="0-100 - Alinhamento com exemplos/padrões")
+    padroes_identificados: List[str] = Field(default_factory=list, description="Padrões encontrados nos documentos")
+    padroes_seguidos: List[str] = Field(default_factory=list)
+    padroes_ignorados: List[str] = Field(default_factory=list)
+    comentario: str
+
+class MissingBehaviorsAnalysis(BaseModel):
+    """Análise de comportamentos obrigatórios ausentes"""
+    score: int = Field(..., description="0-100 - Cobertura de comportamentos obrigatórios")
+    total_comportamentos_obrigatorios: int
+    comportamentos_executados: int
+    comportamentos_ausentes: List[MissingBehavior] = Field(default_factory=list)
+    comentario: str
+
+class DocumentScores(BaseModel):
+    """Scores das métricas baseadas em documentos"""
+    compliance_documental: int = Field(..., description="0-100 - Aderência às regras dos documentos")
+    tom_e_estilo: int = Field(..., description="0-100 - Match de tom e estilo")
+    aderencia_escopo: int = Field(..., description="0-100 - Agente dentro do escopo")
+    violacoes_regras: int = Field(..., description="0-100 - Inverso: mais violações = menor score")
+    comportamentos_obrigatorios: int = Field(..., description="0-100 - Cobertura de comportamentos obrigatórios")
+    alinhamento_padroes: int = Field(..., description="0-100 - Alinhamento com exemplos/padrões")
+    score_geral: int = Field(..., description="Média ponderada dos scores")
+
+class DocumentFullAnalysis(BaseModel):
+    """Análise completa baseada em documentos"""
+    compliance_documental: DocumentComplianceAnalysis
+    tom_e_estilo: ToneStyleAnalysis
+    aderencia_escopo: ScopeAdherenceAnalysis
+    comportamentos_obrigatorios: MissingBehaviorsAnalysis
+    alinhamento_padroes: PatternAlignmentAnalysis
+
+class DocumentSummary(BaseModel):
+    """Resumo da avaliação baseada em documentos"""
+    resultado: Literal["CONFORME", "PARCIALMENTE CONFORME", "NAO CONFORME"]
+    gaps_criticos: List[str] = Field(default_factory=list, description="Gaps mais graves entre expectativa e realidade")
+    pontos_fortes: List[str] = Field(default_factory=list)
+    pontos_fracos: List[str] = Field(default_factory=list)
+    recomendacoes_prompt: List[str] = Field(default_factory=list, description="Recomendações específicas para melhorar o prompt")
+
+class DocumentEvaluationResult(BaseModel):
+    """Resultado completo da avaliação baseada em documentos"""
+    scores: DocumentScores
+    analise: DocumentFullAnalysis
+    resumo: DocumentSummary
+    documentos_utilizados: List[str] = Field(default_factory=list, description="Nomes dos documentos usados")

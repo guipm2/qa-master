@@ -8,3 +8,8 @@ faker
 sqlalchemy
 psycopg2-binary
 psycopg2
+httpx
+python-multipart
+PyPDF2
+anthropic
+supabase==2.27.2
