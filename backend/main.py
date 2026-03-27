@@ -88,10 +88,14 @@ def _get_session(collection_id: str) -> Optional[TestSession]:
 
 
 async def _run_agent_with_retry(agent, prompt: str, label: str = "agent") -> Any:
-    """Executa agent.run() com retry e exponential backoff para erros 529/overloaded."""
+    """
+    Executa agent.run() em thread separada (não bloqueia o event loop)
+    com retry e exponential backoff para erros 529/overloaded.
+    """
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            return agent.run(prompt)
+            # agent.run() é síncrono — roda em thread pool para não bloquear o servidor
+            return await asyncio.to_thread(agent.run, prompt)
         except Exception as e:
             err_str = str(e)
             is_retryable = "529" in err_str or "overloaded" in err_str.lower() or "rate" in err_str.lower()
