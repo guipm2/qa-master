@@ -43,6 +43,39 @@ from models import DocumentEvaluationResult
 app = FastAPI(title="QA Master Backend")
 
 MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
+MAX_RETRIES = 5
+RETRY_BASE_DELAY = 2.0
+
+# Cancellation flags: collection_id -> True means "stop requested"
+_stop_flags: Dict[str, bool] = {}
+
+
+def _should_stop(collection_id: str) -> bool:
+    return _stop_flags.get(collection_id, False)
+
+
+def _clear_stop(collection_id: str) -> None:
+    _stop_flags.pop(collection_id, None)
+
+
+def _request_stop(collection_id: str) -> None:
+    _stop_flags[collection_id] = True
+
+
+async def _run_agent_with_retry(agent, prompt: str, label: str = "agent") -> Any:
+    """Executa agent.run() com retry e exponential backoff para erros 529/overloaded."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return agent.run(prompt)
+        except Exception as e:
+            err_str = str(e)
+            is_retryable = "529" in err_str or "overloaded" in err_str.lower() or "rate" in err_str.lower()
+            if is_retryable and attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                print(f"[RETRY] {label} tentativa {attempt}/{MAX_RETRIES} falhou (overloaded). Aguardando {delay}s...")
+                await asyncio.sleep(delay)
+                continue
+            raise
 
 
 def _get_allowed_origins() -> List[str]:
@@ -383,6 +416,15 @@ async def run_optimization_stream(collection_id: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+# --- Endpoint de Parada ---
+
+@app.post("/api/collections/{collection_id}/stop")
+def stop_collection_run(collection_id: str):
+    """Solicita parada do teste em andamento para esta coleção."""
+    _request_stop(collection_id)
+    return {"message": "Parada solicitada", "collection_id": collection_id}
+
+
 # --- Endpoint Unificado de Teste (Smart Run) ---
 
 @app.post("/api/collections/{collection_id}/run-smart")
@@ -402,6 +444,8 @@ async def run_smart_test(collection_id: str):
 
     os.environ["OPENAI_API_KEY"] = collection.get("openai_api_key", "")
 
+    _clear_stop(collection_id)
+
     async def event_generator() -> AsyncGenerator[str, None]:
         current_subject_instruction = collection["base_subject_instruction"]
         model_id = collection.get("subject_model", "gpt-5.2")
@@ -410,38 +454,35 @@ async def run_smart_test(collection_id: str):
         best_score = -1
         best_subject_instruction = current_subject_instruction
 
-        # Preparar contexto de documentos se existirem
         documents_context = ""
-        doc_ids = []
-        doc_names = []
+        doc_ids: List[str] = []
+        doc_names: List[str] = []
         if has_documents:
             TARGET_SCORE = 80
             for doc in documents:
-                documents_context += f"\n\n{'='*60}\n"
-                documents_context += f"DOCUMENTO: {doc['filename']}\n"
-                documents_context += f"{'='*60}\n"
-                documents_context += doc["content_text"]
-                documents_context += f"\n{'='*60}\n"
+                documents_context += f"\n\n{'='*60}\nDOCUMENTO: {doc['filename']}\n{'='*60}\n{doc['content_text']}\n{'='*60}\n"
             doc_ids = [doc["id"] for doc in documents]
             doc_names = [doc["filename"] for doc in documents]
             yield f"data: {json.dumps({'type': 'mode', 'mode': 'document', 'document_count': len(documents), 'document_names': doc_names})}\n\n"
-            yield f"data: {json.dumps({'type': 'status', 'content': f'Modo Documental: {len(documents)} documento(s) detectado(s) — {chr(44).join(doc_names)}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'content': f'Modo Documental: {len(documents)} documento(s) detectado(s)'})}\n\n"
         else:
             TARGET_SCORE = 90
-            # Determinar prompt baseado no histórico
             runs = get_collection_runs(collection_id)
             if runs:
                 current_subject_instruction = runs[-1]["subject_instruction"]
             yield f"data: {json.dumps({'type': 'mode', 'mode': 'standard', 'document_count': 0})}\n\n"
-            yield f"data: {json.dumps({'type': 'status', 'content': 'Modo Padrão: nenhum documento detectado — usando Judge de qualidade geral'})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Modo Padrao: usando Judge de qualidade geral'})}\n\n"
 
         iteration_count = 0
         while iteration_count < MAX_SAFETY_ITERATIONS:
-            current_iteration = iteration_count + 1
+            # --- CHECK STOP ---
+            if _should_stop(collection_id):
+                yield f"data: {json.dumps({'type': 'done', 'reason': 'stopped_by_user'})}\n\n"
+                break
 
+            current_iteration = iteration_count + 1
             yield f"data: {json.dumps({'type': 'iteration_start', 'iteration': current_iteration, 'prompt': current_subject_instruction})}\n\n"
 
-            # Criar registro no banco
             if has_documents:
                 run_record = create_document_test_run(collection_id, current_subject_instruction, doc_ids)
             else:
@@ -452,6 +493,7 @@ async def run_smart_test(collection_id: str):
                     subject_instruction=current_subject_instruction
                 ))
             run_id = run_record["id"]
+            update_fn = update_document_test_run if has_documents else update_test_run
 
             try:
                 config = TestConfig(
@@ -464,13 +506,18 @@ async def run_smart_test(collection_id: str):
                 subject = create_subject_agent(config, model_id=model_id)
                 evaluator = create_evaluator_agent(config)
 
-                # --- CONVERSA ---
+                # --- CONVERSA com retry ---
                 transcript_str = ""
-                transcript_objs = []
+                transcript_objs: List[Dict[str, str]] = []
                 last_message = "Comece a conversa."
                 sender = "evaluator"
+                stopped = False
 
                 for turn_i in range(config.max_turns * 2):
+                    if _should_stop(collection_id):
+                        stopped = True
+                        break
+
                     if sender == "evaluator":
                         agent = evaluator
                         current_role = "evaluator"
@@ -480,7 +527,7 @@ async def run_smart_test(collection_id: str):
                         current_role = "subject"
                         prompt = last_message
 
-                    response = agent.run(prompt)
+                    response = await _run_agent_with_retry(agent, prompt, label=current_role)
                     content = response.content
                     last_message = content
                     transcript_str += f"{current_role.upper()}: {content}\n\n"
@@ -489,67 +536,53 @@ async def run_smart_test(collection_id: str):
                     sender = "subject" if sender == "evaluator" else "evaluator"
                     await asyncio.sleep(0.1)
 
-                # --- AVALIAÇÃO ---
+                if stopped:
+                    update_fn(run_id, {"status": "stopped", "transcript": transcript_objs})
+                    yield f"data: {json.dumps({'type': 'done', 'reason': 'stopped_by_user'})}\n\n"
+                    break
+
+                # --- AVALIAÇÃO com retry ---
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Avaliando...'})}\n\n"
 
                 if has_documents:
                     judge = create_document_judge_agent()
-                    judge_input = f"""
---- DOCUMENTOS DE REFERÊNCIA (GABARITO) ---
-{documents_context}
-
---- PROMPT ATUAL DO AGENTE ---
-{current_subject_instruction}
-
---- CONVERSA COMPLETA ---
-{transcript_str}
-
-Analise a conversa comparando com os documentos de referência acima.
-"""
-                    eval_response = judge.run(judge_input)
+                    judge_input = f"--- DOCUMENTOS DE REFERÊNCIA (GABARITO) ---\n{documents_context}\n\n--- PROMPT ATUAL DO AGENTE ---\n{current_subject_instruction}\n\n--- CONVERSA COMPLETA ---\n{transcript_str}\n\nAnalise a conversa comparando com os documentos de referência acima."
+                    eval_response = await _run_agent_with_retry(judge, judge_input, label="document_judge")
                     result_data = _coerce_document_evaluation(eval_response.content)
                     result_json = _to_dict(result_data)
                     result_json["documentos_utilizados"] = doc_names
                     score = result_data.scores.score_geral
                 else:
                     judge = create_judge_agent(config)
-                    eval_response = judge.run(f"Transcrição:\n{transcript_str}")
+                    eval_response = await _run_agent_with_retry(judge, f"Transcrição:\n{transcript_str}", label="judge")
                     result_data = _coerce_standard_evaluation(eval_response.content)
                     result_json = _to_dict(result_data)
                     score = result_data.scores.score_geral
 
-                # --- SALVAR ---
-                update_fn = update_document_test_run if has_documents else update_test_run
-                update_fn(run_id, {
-                    "status": "completed",
-                    "transcript": transcript_objs,
-                    "evaluation_result": result_json,
-                    "score": score
-                })
-
+                update_fn(run_id, {"status": "completed", "transcript": transcript_objs, "evaluation_result": result_json, "score": score})
                 yield f"data: {json.dumps({'type': 'result', 'iteration': current_iteration, 'score': score, 'details': result_json})}\n\n"
 
-                # --- PARADA ---
                 if score >= TARGET_SCORE:
                     yield f"data: {json.dumps({'type': 'status', 'content': f'Alvo atingido! Score {score} >= {TARGET_SCORE}.'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'reason': 'target_reached'})}\n\n"
                     break
 
-                # --- MELHOR PROMPT ---
                 if score > best_score:
                     best_score = score
                     best_subject_instruction = current_subject_instruction
                     yield f"data: {json.dumps({'type': 'status', 'content': f'Novo melhor score: {score}!'})}\n\n"
                 elif score < best_score:
-                    yield f"data: {json.dumps({'type': 'status', 'content': f'Score caiu ({score} < {best_score}). Usando melhor histórico como referência.'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'status', 'content': f'Score caiu ({score} < {best_score}). Usando melhor histórico.'})}\n\n"
 
-                # --- OTIMIZAÇÃO ---
+                if _should_stop(collection_id):
+                    yield f"data: {json.dumps({'type': 'done', 'reason': 'stopped_by_user'})}\n\n"
+                    break
+
+                # --- OTIMIZAÇÃO com retry ---
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Otimizando prompt...'})}\n\n"
                 opt_agent = create_optimizer_agent()
                 new_prompt = generate_improved_prompt(
-                    opt_agent,
-                    current_subject_instruction,
-                    result_data,
+                    opt_agent, current_subject_instruction, result_data,
                     best_prompt=best_subject_instruction,
                     documents_context=documents_context if has_documents else None,
                 )
@@ -562,12 +595,13 @@ Analise a conversa comparando com os documentos de referência acima.
                 print(f"Erro no loop: {e}")
                 import traceback
                 traceback.print_exc()
-                update_fn = update_document_test_run if has_documents else update_test_run
                 update_fn(run_id, {"status": "failed"})
                 yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
                 break
         else:
             yield f"data: {json.dumps({'type': 'done', 'reason': 'max_iterations'})}\n\n"
+
+        _clear_stop(collection_id)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
