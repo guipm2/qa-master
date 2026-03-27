@@ -125,7 +125,14 @@ export default function WebhookPage() {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        setError(errData.detail || `Erro ${res.status}`);
+        const detail = errData.detail;
+        if (typeof detail === "string") {
+          setError(detail);
+        } else if (Array.isArray(detail)) {
+          setError(detail.map((e: { msg?: string }) => e.msg || JSON.stringify(e)).join("; "));
+        } else {
+          setError(`Erro ${res.status}`);
+        }
       } else {
         const data: WebhookResponse = await res.json();
         setResponse(data);
