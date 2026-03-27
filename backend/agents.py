@@ -1,32 +1,11 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.models.anthropic import Claude
-from agno.db.postgres import PostgresDb
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 from models import TestConfig, EvaluationResult, DocumentEvaluationResult
-
-# Inicialização Singleton do Banco de Dados para evitar conflitos de Metadata
-agent_storage = None
-
-# Construção segura da URL do banco a partir das variáveis individuais
-db_user = os.getenv("DB_USER")
-db_password = os.getenv("DB_PASSWORD")
-db_host = os.getenv("DB_HOST")
-db_port = os.getenv("DB_PORT", "5432")
-db_name = os.getenv("DB_NAME", "postgres")
-
-if db_user and db_password and db_host:
-    from urllib.parse import quote_plus
-    encoded_password = quote_plus(db_password)
-    db_url = f"postgresql://{db_user}:{encoded_password}@{db_host}:{db_port}/{db_name}"
-
-    agent_storage = PostgresDb(
-        db_url=db_url,
-        memory_table="agent_memories",
-    )
 
 # Modelo Claude usado para todos os agentes auxiliares (avaliador, juiz, otimizador)
 CLAUDE_MODEL_ID = "claude-opus-4-6"
@@ -71,8 +50,6 @@ def create_subject_agent(config: TestConfig, model_id: str = DEFAULT_SUBJECT_MOD
         description="Você é o Assistente de IA sendo testado.",
         instructions=[config.subject_instruction],
         markdown=True,
-        db=agent_storage,
-        update_memory_on_run=True,
     )
 
 
@@ -102,8 +79,6 @@ def create_evaluator_agent(config: TestConfig) -> Agent:
             config.evaluator_instruction,
         ],
         markdown=False,
-        db=agent_storage,
-        update_memory_on_run=True,
     )
 
 
