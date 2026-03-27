@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
     Play, Square, Terminal, Zap, CheckCircle, ChevronDown, ChevronUp,
     MessageSquare, FileText, Scale, Upload, Trash2, BookOpen, AlertTriangle,
-    Loader2, ArrowLeft, Info
+    Loader2, ArrowLeft, Info, Brain, Sparkles
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
@@ -21,9 +21,10 @@ interface MissingBehavior { impacto?: string; comportamento?: string; sugestao_c
 interface AnalysisItem { score?: number; comentario?: string; violacoes?: RuleViolation[]; comportamentos_ausentes?: MissingBehavior[]; }
 interface EvalSummary { resultado?: string; gaps_criticos?: string[]; pontos_fortes?: string[]; pontos_fracos?: string[]; recomendacoes_prompt?: string[]; recomendacoes?: string[]; }
 interface EvalData { documentos_utilizados?: string[]; scores?: Record<string, unknown>; analise?: Record<string, AnalysisItem>; resumo?: EvalSummary; }
-interface TestRun { id: string; iteration: number; status: string; score: number; subject_instruction: string; evaluation_result: EvalData | null; transcript: Msg[]; created_at?: string; }
+interface TestRun { id: string; iteration: number; status: string; score: number; subject_instruction: string; evaluation_result: EvalData | null; transcript: Msg[]; created_at?: string; error_message?: string; failed_at_stage?: string; }
 interface RefDoc { id: string; collection_id: string; filename: string; file_type: string; content_text: string; file_size_bytes: number; created_at: string; }
-interface DocTestRun { id: string; collection_id: string; status: string; subject_instruction: string; document_ids: string[]; transcript: Msg[]; evaluation_result: EvalData | null; score: number; created_at: string; }
+interface DocTestRun { id: string; collection_id: string; status: string; subject_instruction: string; document_ids: string[]; transcript: Msg[]; evaluation_result: EvalData | null; score: number; created_at: string; error_message?: string; failed_at_stage?: string; }
+interface Progress { stage: string; stage_label: string; iteration: number; max_iterations: number; turn: number; max_turns: number; percent: number; }
 type SSE = { type: string; [k: string]: unknown };
 type Tab = "history" | "documents";
 type AnyRun = (TestRun | DocTestRun) & { _kind: "standard" | "document" };
@@ -52,6 +53,7 @@ export default function CollectionPage() {
     const [logs, setLogs] = useState<string[]>([]);
     const [live, setLive] = useState<Msg[]>([]);
     const [iteration, setIteration] = useState(0);
+    const [progress, setProgress] = useState<Progress | null>(null);
 
     /* selection */
     const [selected, setSelected] = useState<AnyRun | null>(null);
@@ -112,8 +114,14 @@ export default function CollectionPage() {
             case "message": setLive(p => [...p, { role: String(e.role ?? ""), content: String(e.content ?? "") }]); break;
             case "result": log(`Score: ${e.score}/100`, Number(e.score ?? 0) >= 80 ? "success" : "warning"); break;
             case "optimization": log("Prompt otimizado", "system"); setCurrentPrompt(String(e.new_prompt ?? "")); break;
-            case "error": log(`ERRO: ${e.content}`, "error"); break;
-            case "done": log(`Concluido: ${e.reason}`, "success"); setIsRunning(false); break;
+            case "progress": setProgress(e as unknown as Progress); break;
+            case "error": {
+                const stageLabel = e.failed_at_stage_label ? ` [etapa: ${e.failed_at_stage_label}]` : "";
+                const msgCount = e.partial_messages ? ` (${e.partial_messages} msgs coletadas)` : "";
+                log(`ERRO${stageLabel}: ${e.content}${msgCount}`, "error");
+                break;
+            }
+            case "done": log(`Concluido: ${e.reason}`, "success"); setIsRunning(false); setProgress(null); break;
         }
     };
 
@@ -155,7 +163,7 @@ export default function CollectionPage() {
     /* START: POST to launch background task, then connect to events */
     const startTest = async () => {
         if (isRunning) return;
-        setLive([]); setSelected(null); setRunMode(null); setLogs([]);
+        setLive([]); setSelected(null); setRunMode(null); setLogs([]); setProgress(null);
         log("Iniciando teste...", "info");
         try {
             const res = await fetch(`${API}/api/collections/${id}/run-smart`, { method: "POST" });
@@ -197,6 +205,20 @@ export default function CollectionPage() {
         if (!confirm(`Remover "${name}"?`)) return;
         try { await fetch(`${API}/api/documents/${docId}`, { method: "DELETE" }); setDocuments(p => p.filter(d => d.id !== docId)); log(`"${name}" removido`, "info"); }
         catch (err: unknown) { log(errMsg(err), "error"); }
+    };
+
+    const deleteRun = async (runId: string, kind: "standard" | "document", e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!confirm("Remover este teste? Essa acao nao pode ser desfeita.")) return;
+        const endpoint = kind === "document" ? `${API}/api/document-test-runs/${runId}` : `${API}/api/test-runs/${runId}`;
+        try {
+            const res = await fetch(endpoint, { method: "DELETE" });
+            if (!res.ok) { log("Erro ao remover teste", "error"); return; }
+            if (kind === "document") setDocRuns(p => p.filter(r => r.id !== runId));
+            else setRuns(p => p.filter(r => r.id !== runId));
+            if (selected?.id === runId) { setSelected(null); setLive([]); }
+            log("Teste removido", "info");
+        } catch (err: unknown) { log(errMsg(err), "error"); }
     };
 
     /* select */
@@ -287,6 +309,70 @@ export default function CollectionPage() {
                 )}
             </AnimatePresence>
 
+            {/* ══════ PROGRESS BAR ══════ */}
+            <AnimatePresence>
+                {isRunning && progress && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="px-4 sm:px-6 py-3 border-b border-gray-800 bg-gray-950/60"
+                    >
+                        {/* stage indicators */}
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-3">
+                                {[
+                                    { key: "conversation", label: "Conversa", icon: <MessageSquare className="w-3 h-3" /> },
+                                    { key: "evaluation", label: "Avaliação", icon: <Brain className="w-3 h-3" /> },
+                                    { key: "optimization", label: "Otimização", icon: <Sparkles className="w-3 h-3" /> },
+                                ].map((st, i) => {
+                                    const stageOrder = ["conversation", "evaluation", "optimization"];
+                                    const currentIdx = stageOrder.indexOf(progress.stage);
+                                    const thisIdx = i;
+                                    const isActive = thisIdx === currentIdx;
+                                    const isDone = thisIdx < currentIdx;
+                                    return (
+                                        <React.Fragment key={st.key}>
+                                            {i > 0 && <div className={clsx("w-6 h-px", isDone ? "bg-blue-500" : "bg-gray-700")} />}
+                                            <div className={clsx(
+                                                "flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-full transition-all duration-300",
+                                                isActive ? "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/40" :
+                                                isDone ? "bg-green-500/10 text-green-500" : "text-gray-600"
+                                            )}>
+                                                {isDone ? <CheckCircle className="w-3 h-3" /> : isActive ? <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" /></span> : st.icon}
+                                                <span className="hidden sm:inline">{st.label}</span>
+                                            </div>
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </div>
+                            <div className="text-[10px] text-gray-500 font-mono">
+                                Iteração {progress.iteration}/{progress.max_iterations} — {Math.round(progress.percent)}%
+                            </div>
+                        </div>
+
+                        {/* bar */}
+                        <div className="relative w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                            <motion.div
+                                className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-blue-600 via-blue-500 to-purple-500"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${progress.percent}%` }}
+                                transition={{ duration: 0.5, ease: "easeOut" }}
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-pulse" />
+                        </div>
+
+                        {/* label */}
+                        <div className="mt-1.5 text-[10px] text-gray-500">
+                            {progress.stage_label}
+                            {progress.stage === "conversation" && progress.max_turns > 0 && (
+                                <span className="text-gray-600 ml-1">({progress.turn}/{progress.max_turns} mensagens)</span>
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* ══════ GRID ══════ */}
             <div className="flex-1 grid grid-cols-12 gap-3 p-3 sm:p-4 overflow-hidden">
 
@@ -346,8 +432,12 @@ export default function CollectionPage() {
                                 {isRunning && live.length ? (
                                     <><Zap className="w-4 h-4 animate-pulse text-yellow-400" /> Conversa ao Vivo <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 animate-pulse ml-1">LIVE</span></>
                                 ) : selected ? (
-                                    <>{isDoc ? <BookOpen className="w-4 h-4 text-orange-400" /> : <CheckCircle className="w-4 h-4 text-blue-400" />}
-                                    {isDoc ? `Teste Documental — Score: ${(selected as DocTestRun).score || 0}` : `Iteracao ${(selected as TestRun).iteration} — Score: ${(selected as TestRun).score || 0}`}</>
+                                    selected.status === "failed" ? (
+                                        <><AlertTriangle className="w-4 h-4 text-red-400" /> Teste Falhou {selected.failed_at_stage && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 ml-1">na etapa: {selected.failed_at_stage}</span>}</>
+                                    ) : (
+                                        <>{isDoc ? <BookOpen className="w-4 h-4 text-orange-400" /> : <CheckCircle className="w-4 h-4 text-blue-400" />}
+                                        {isDoc ? `Teste Documental — Score: ${(selected as DocTestRun).score || 0}` : `Iteracao ${(selected as TestRun).iteration} — Score: ${(selected as TestRun).score || 0}`}</>
+                                    )
                                 ) : (
                                     <><Info className="w-4 h-4 text-gray-500" /> {documents.length > 0 ? "Clique em Iniciar Teste para avaliar com documentos" : "Clique em Iniciar Teste para comecar"}</>
                                 )}
@@ -380,8 +470,33 @@ export default function CollectionPage() {
                             {/* SELECTED RUN */}
                             {selected && !isRunning && (
                                 <div className="divide-y divide-gray-800">
+                                    {/* Error Banner */}
+                                    {selected.status === "failed" && (
+                                        <div className="p-4 bg-red-950/30 border-b border-red-900/40">
+                                            <div className="flex items-start gap-3">
+                                                <div className="p-2 bg-red-900/40 rounded-lg shrink-0">
+                                                    <AlertTriangle className="w-5 h-5 text-red-400" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-sm font-bold text-red-400 mb-1">Teste falhou{selected.failed_at_stage && ` na etapa de ${
+                                                        selected.failed_at_stage === "conversation" ? "Conversa" :
+                                                        selected.failed_at_stage === "evaluation" ? "Avaliacao" :
+                                                        selected.failed_at_stage === "optimization" ? "Otimizacao" : selected.failed_at_stage
+                                                    }`}</div>
+                                                    {selected.error_message && (
+                                                        <pre className="text-xs text-red-300/80 bg-red-950/40 rounded p-2 mt-2 whitespace-pre-wrap break-all font-mono max-h-32 overflow-y-auto">{selected.error_message}</pre>
+                                                    )}
+                                                    <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-500">
+                                                        {live.length > 0 && <span>{live.length} mensagens coletadas antes da falha</span>}
+                                                        {selected.created_at && <span>{new Date(selected.created_at).toLocaleString()}</span>}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* Chat */}
-                                    <Section title="Conversa" icon={<MessageSquare className="w-4 h-4" />} badge={`${live.length} msgs`} color="blue" open={sections.chat} toggle={() => toggle("chat")}>
+                                    <Section title={selected.status === "failed" ? "Conversa (parcial)" : "Conversa"} icon={<MessageSquare className="w-4 h-4" />} badge={`${live.length} msgs`} color={selected.status === "failed" ? "red" : "blue"} open={sections.chat} toggle={() => toggle("chat")}>
                                         <div className="p-3 space-y-2 max-h-60 overflow-y-auto">
                                             {live.length === 0 ? <Empty text="Sem mensagens" /> : live.map((m, i) => (
                                                 <div key={i} className={clsx("p-2.5 rounded-lg text-sm", m.role === "evaluator" ? "bg-blue-900/30 border border-blue-800/30 mr-auto max-w-[90%]" : "bg-purple-900/30 border border-purple-800/30 ml-auto max-w-[90%]")}>
@@ -521,8 +636,10 @@ export default function CollectionPage() {
                                         {docRuns.map(r => (
                                             <HistoryCard key={r.id} onClick={() => selectDoc(r)} active={selected?.id === r.id}
                                                 label={<><BookOpen className="w-3 h-3" /> DOC</>} labelColor="orange" score={r.score}
-                                                detail={r.status === "completed" ? `${r.transcript?.length || 0} msgs` : r.status === "running" ? "Rodando..." : r.status === "failed" ? "Falhou" : "--"}
+                                                failed={r.status === "failed"}
+                                                detail={r.status === "completed" ? `${r.transcript?.length || 0} msgs` : r.status === "running" ? "Rodando..." : r.status === "failed" ? `Falhou${r.failed_at_stage ? ` (${r.failed_at_stage})` : ""}` : "--"}
                                                 date={r.created_at} scoreThreshold={80}
+                                                onDelete={(e) => deleteRun(r.id, "document", e)}
                                             />
                                         ))}
                                         <div className="border-t border-gray-800/50 my-1" />
@@ -533,7 +650,9 @@ export default function CollectionPage() {
                                 {runs.slice().reverse().map(r => (
                                     <HistoryCard key={r.id} onClick={() => selectStd(r)} active={selected?.id === r.id}
                                         label={`IT. ${r.iteration}`} labelColor="gray" score={r.score}
-                                        detail={r.status === "completed" ? `${r.transcript?.length || 0} msgs` : r.status === "running" ? "Rodando..." : r.status === "failed" ? "Falhou" : "--"}
+                                        failed={r.status === "failed"}
+                                        detail={r.status === "completed" ? `${r.transcript?.length || 0} msgs` : r.status === "running" ? "Rodando..." : r.status === "failed" ? `Falhou${r.failed_at_stage ? ` (${r.failed_at_stage})` : ""}` : "--"}
+                                        onDelete={(e) => deleteRun(r.id, "standard", e)}
                                     />
                                 ))}
                             </div>
@@ -609,18 +728,27 @@ function TabBtn({ active, onClick, color, badge, children }: { active: boolean; 
     );
 }
 
-function HistoryCard({ onClick, active, label, labelColor, score, detail, date, scoreThreshold = 90 }: {
-    onClick: () => void; active: boolean; label: React.ReactNode; labelColor: string; score: number; detail: string; date?: string; scoreThreshold?: number;
+function HistoryCard({ onClick, active, label, labelColor, score, detail, date, scoreThreshold = 90, failed, onDelete }: {
+    onClick: () => void; active: boolean; label: React.ReactNode; labelColor: string; score: number; detail: string; date?: string; scoreThreshold?: number; failed?: boolean; onDelete?: (e: React.MouseEvent) => void;
 }) {
     const lc: Record<string, string> = { orange: "text-orange-400", gray: "text-gray-500", blue: "text-blue-400" };
     return (
-        <div onClick={onClick} className={clsx("p-2 rounded-lg transition-all cursor-pointer border-l-2",
-            active ? "bg-blue-900/30 border-l-blue-500" : "bg-gray-800/30 hover:bg-gray-800/50 border-l-transparent hover:border-l-blue-500/50")}>
+        <div onClick={onClick} className={clsx("p-2 rounded-lg transition-all cursor-pointer border-l-2 group relative",
+            failed ? (active ? "bg-red-900/30 border-l-red-500" : "bg-red-950/20 hover:bg-red-900/20 border-l-red-500/50 hover:border-l-red-500")
+            : active ? "bg-blue-900/30 border-l-blue-500" : "bg-gray-800/30 hover:bg-gray-800/50 border-l-transparent hover:border-l-blue-500/50")}>
             <div className="flex justify-between items-center">
-                <span className={clsx("text-[10px] font-bold flex items-center gap-1", lc[labelColor] ?? "text-gray-500")}>{label}</span>
-                <span className={clsx("text-[10px] font-bold px-1.5 py-0.5 rounded", scoreBg(score, scoreThreshold))}>{score || 0}</span>
+                <span className={clsx("text-[10px] font-bold flex items-center gap-1", failed ? "text-red-400" : lc[labelColor] ?? "text-gray-500")}>{failed && <AlertTriangle className="w-3 h-3" />}{label}</span>
+                <div className="flex items-center gap-1">
+                    {onDelete && (
+                        <button onClick={onDelete} className="p-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-900/30 rounded text-gray-600 hover:text-red-400 transition-all" aria-label="Remover">
+                            <Trash2 className="w-3 h-3" />
+                        </button>
+                    )}
+                    {failed ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-900/50 text-red-400">ERRO</span>
+                        : <span className={clsx("text-[10px] font-bold px-1.5 py-0.5 rounded", scoreBg(score, scoreThreshold))}>{score || 0}</span>}
+                </div>
             </div>
-            <div className="text-[10px] text-gray-600 mt-0.5">{detail}</div>
+            <div className={clsx("text-[10px] mt-0.5", failed ? "text-red-400/60" : "text-gray-600")}>{detail}</div>
             {date && <div className="text-[9px] text-gray-700 mt-0.5">{new Date(date).toLocaleString()}</div>}
         </div>
     );

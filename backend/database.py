@@ -123,6 +123,9 @@ def update_test_run(run_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         return response.data[0]
     return {"id": run_id, **updates}
 
+def delete_test_run(run_id: str) -> None:
+    supabase.table("test_runs").delete().eq("id", run_id).execute()
+
 def get_collection_runs(collection_id: str) -> List[Dict[str, Any]]:
     response = supabase.table("test_runs").select("*").eq("collection_id", collection_id).order("iteration", desc=False).execute()
     return response.data
@@ -172,6 +175,9 @@ def update_document_test_run(run_id: str, updates: Dict[str, Any]) -> Dict[str, 
     if response.data:
         return response.data[0]
     return {"id": run_id, **updates}
+
+def delete_document_test_run(run_id: str) -> None:
+    supabase.table("document_test_runs").delete().eq("id", run_id).execute()
 
 def get_document_test_runs(collection_id: str) -> List[Dict[str, Any]]:
     response = supabase.table("document_test_runs").select("*").eq("collection_id", collection_id).order("created_at", desc=True).execute()

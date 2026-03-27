@@ -34,6 +34,8 @@ from database import (
     create_document_test_run,
     update_document_test_run,
     get_document_test_runs,
+    delete_test_run,
+    delete_document_test_run,
 )
 from document_parser import parse_document
 
@@ -207,6 +209,18 @@ def get_collection(collection_id: str):
 @app.get("/api/collections/{collection_id}/runs")
 def list_collection_runs(collection_id: str):
     return get_collection_runs(collection_id)
+
+@app.delete("/api/test-runs/{run_id}")
+def delete_test_run_endpoint(run_id: str):
+    """Remove um test run do banco."""
+    delete_test_run(run_id)
+    return {"message": "Test run removido"}
+
+@app.delete("/api/document-test-runs/{run_id}")
+def delete_document_test_run_endpoint(run_id: str):
+    """Remove um document test run do banco."""
+    delete_document_test_run(run_id)
+    return {"message": "Document test run removido"}
 
 @app.put("/api/collections/{collection_id}")
 def update_collection_endpoint(collection_id: str, data: CollectionUpdate):
@@ -546,6 +560,30 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                 s.emit({"type": "mode", "mode": "standard", "document_count": 0})
                 s.emit({"type": "status", "content": "Modo Padrao: usando Judge de qualidade geral"})
 
+            max_iterations = MAX_SAFETY_ITERATIONS
+            max_turns_total = collection["max_turns"] * 2
+
+            def emit_progress(stage: str, label: str, iteration: int, turn: int = 0, max_turns: int = 0):
+                """Emite evento de progresso com porcentagem calculada."""
+                stage_weights = {"conversation": 0.60, "evaluation": 0.25, "optimization": 0.15}
+                stage_starts  = {"conversation": 0.0,  "evaluation": 0.60, "optimization": 0.85}
+                stage_pct = stage_starts.get(stage, 0.0)
+                if stage == "conversation" and max_turns > 0:
+                    stage_pct += stage_weights["conversation"] * (turn / max_turns)
+                elif stage in ("evaluation", "optimization"):
+                    stage_pct = stage_starts[stage] + stage_weights[stage] * 0.5
+                iter_pct = ((iteration - 1) + stage_pct) / max_iterations * 100
+                s.emit({
+                    "type": "progress",
+                    "stage": stage,
+                    "stage_label": label,
+                    "iteration": iteration,
+                    "max_iterations": max_iterations,
+                    "turn": turn,
+                    "max_turns": max_turns,
+                    "percent": round(min(iter_pct, 99), 1),
+                })
+
             iteration_count = 0
             while iteration_count < MAX_SAFETY_ITERATIONS:
                 if s.stop_requested:
@@ -554,6 +592,7 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
 
                 current_iteration = iteration_count + 1
                 s.emit({"type": "iteration_start", "iteration": current_iteration, "prompt": current_subject_instruction})
+                emit_progress("conversation", "Preparando conversa...", current_iteration, 0, max_turns_total)
 
                 if has_documents:
                     run_record = create_document_test_run(collection_id, current_subject_instruction, doc_ids)
@@ -567,6 +606,9 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                 run_id = run_record["id"]
                 update_fn = update_document_test_run if has_documents else update_test_run
 
+                current_stage = "conversation"
+                transcript_objs: List[Dict[str, str]] = []
+
                 try:
                     config = TestConfig(
                         subject_instruction=current_subject_instruction,
@@ -578,7 +620,6 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                     evaluator_agent = create_evaluator_agent(config)
 
                     transcript_str = ""
-                    transcript_objs: List[Dict[str, str]] = []
                     last_message = "Comece a conversa."
                     sender = "evaluator"
                     stopped = False
@@ -602,6 +643,7 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                         transcript_str += f"{current_role.upper()}: {content}\n\n"
                         transcript_objs.append({"role": current_role, "content": content})
                         s.emit({"type": "message", "role": current_role, "content": content})
+                        emit_progress("conversation", f"Conversa (msg {turn_i + 1}/{max_turns_total})", current_iteration, turn_i + 1, max_turns_total)
                         sender = "subject" if sender == "evaluator" else "evaluator"
                         await asyncio.sleep(0.1)
 
@@ -610,7 +652,9 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                         s.emit({"type": "done", "reason": "stopped_by_user"})
                         break
 
+                    current_stage = "evaluation"
                     s.emit({"type": "status", "content": "Avaliando..."})
+                    emit_progress("evaluation", "Analisando conversa...", current_iteration)
 
                     if has_documents:
                         judge = create_document_judge_agent()
@@ -646,7 +690,9 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                         s.emit({"type": "done", "reason": "stopped_by_user"})
                         break
 
+                    current_stage = "optimization"
                     s.emit({"type": "status", "content": "Otimizando prompt..."})
+                    emit_progress("optimization", "Otimizando prompt...", current_iteration)
                     opt_agent = create_optimizer_agent()
                     new_prompt = generate_improved_prompt(
                         opt_agent, current_subject_instruction, result_data,
@@ -659,11 +705,23 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                     await asyncio.sleep(1)
 
                 except Exception as e:
-                    print(f"Erro no loop: {e}")
                     import traceback
                     traceback.print_exc()
-                    update_fn(run_id, {"status": "failed"})
-                    s.emit({"type": "error", "content": str(e)})
+                    error_str = str(e)
+                    stage_labels = {"conversation": "Conversa", "evaluation": "Avaliação", "optimization": "Otimização"}
+                    update_fn(run_id, {
+                        "status": "failed",
+                        "transcript": transcript_objs if transcript_objs else None,
+                        "error_message": error_str,
+                        "failed_at_stage": current_stage,
+                    })
+                    s.emit({
+                        "type": "error",
+                        "content": error_str,
+                        "failed_at_stage": current_stage,
+                        "failed_at_stage_label": stage_labels.get(current_stage, current_stage),
+                        "partial_messages": len(transcript_objs),
+                    })
                     break
             else:
                 s.emit({"type": "done", "reason": "max_iterations"})
