@@ -117,31 +117,58 @@ export default function CollectionPage() {
         }
     };
 
-    /* cleanup on unmount (navigating away) */
-    useEffect(() => {
-        return () => { abortRef.current?.abort(); };
-    }, []);
-
-    /* UNIFIED START */
-    const startTest = async () => {
-        if (isRunning) return;
+    /* Subscribe to SSE events stream (reconnectable) */
+    const connectToEvents = useCallback(async () => {
         const controller = new AbortController();
         abortRef.current = controller;
-        setIsRunning(true); setLive([]); setSelected(null); setRunMode(null); setStopping(false);
-        log("Iniciando teste inteligente...", "info");
+        setIsRunning(true); setStopping(false);
         try {
-            const res = await fetch(`${API}/api/collections/${id}/run-smart`, { method: "POST", signal: controller.signal });
-            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
-            if (!res.body) throw new Error("Sem corpo de resposta");
+            const res = await fetch(`${API}/api/collections/${id}/events`, { signal: controller.signal });
+            if (!res.ok || !res.body) return;
             await processSSE(res.body, handleSSE);
         } catch (e: unknown) {
-            if (e instanceof DOMException && e.name === "AbortError") {
-                log("Conexao encerrada (navegou ou parou).", "info");
-            } else {
-                log(`Erro: ${errMsg(e)}`, "error");
+            if (!(e instanceof DOMException && e.name === "AbortError")) {
+                log(`Erro na conexao: ${errMsg(e)}`, "error");
             }
+        } finally {
+            setIsRunning(false); setStopping(false); abortRef.current = null;
+            fetchData();
         }
-        finally { setIsRunning(false); setStopping(false); abortRef.current = null; log("Finalizado.", "info"); fetchData(); }
+    }, [id]);
+
+    /* On mount: check if a test is already running and reconnect */
+    useEffect(() => {
+        const checkRunning = async () => {
+            try {
+                const res = await fetch(`${API}/api/collections/${id}/test-status`);
+                const data = await res.json();
+                if (data.status === "running") {
+                    log("Teste em andamento detectado — reconectando...", "system");
+                    connectToEvents();
+                }
+            } catch {}
+        };
+        checkRunning();
+        return () => { abortRef.current?.abort(); };
+    }, [id, connectToEvents]);
+
+    /* START: POST to launch background task, then connect to events */
+    const startTest = async () => {
+        if (isRunning) return;
+        setLive([]); setSelected(null); setRunMode(null); setLogs([]);
+        log("Iniciando teste...", "info");
+        try {
+            const res = await fetch(`${API}/api/collections/${id}/run-smart`, { method: "POST" });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                log(`Erro: ${err.detail || `HTTP ${res.status}`}`, "error");
+                return;
+            }
+            // Agora conecta ao stream de eventos
+            connectToEvents();
+        } catch (e: unknown) {
+            log(`Erro: ${errMsg(e)}`, "error");
+        }
     };
 
     /* STOP */
@@ -149,11 +176,7 @@ export default function CollectionPage() {
         if (!isRunning || stopping) return;
         setStopping(true);
         log("Solicitando parada...", "warning");
-        try {
-            await fetch(`${API}/api/collections/${id}/stop`, { method: "POST" });
-        } catch {}
-        // Also abort the SSE stream so the frontend unlocks immediately
-        abortRef.current?.abort();
+        try { await fetch(`${API}/api/collections/${id}/stop`, { method: "POST" }); } catch {}
     };
 
     /* upload */
