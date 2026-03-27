@@ -43,7 +43,7 @@ export default function DashboardPage() {
   const [newDesc, setNewDesc] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [subjectPrompt, setSubjectPrompt] = useState("Você é um assistente de IA. Seja útil.");
-  const [evaluatorPrompt, setEvaluatorPrompt] = useState("Você é um Testador QA.");
+  const [evaluatorPrompt, setEvaluatorPrompt] = useState("");
   const [maxTurns, setMaxTurns] = useState(20);
   const [numPersonas, setNumPersonas] = useState(5);
   const [subjectModel, setSubjectModel] = useState("gpt-5.2");
@@ -165,7 +165,7 @@ export default function DashboardPage() {
     setNewDesc("");
     setApiKey("");
     setSubjectPrompt("Você é um assistente de IA. Seja útil.");
-    setEvaluatorPrompt("Você é um Testador QA.");
+    setEvaluatorPrompt("");
     setMaxTurns(20);
     setNumPersonas(5);
     setSubjectModel("gpt-5.2");
@@ -335,8 +335,9 @@ export default function DashboardPage() {
                       <textarea value={subjectPrompt} onChange={e => setSubjectPrompt(e.target.value)} className="w-full h-24 bg-black border border-gray-700 rounded p-2 text-sm focus:border-blue-500 focus:outline-none" />
                     </div>
                     <div>
-                      <label className="block text-sm text-gray-400 mb-1">Prompt do Avaliador</label>
-                      <textarea value={evaluatorPrompt} onChange={e => setEvaluatorPrompt(e.target.value)} className="w-full h-24 bg-black border border-gray-700 rounded p-2 text-sm focus:border-blue-500 focus:outline-none" />
+                      <label className="block text-sm text-gray-400 mb-1">Cenario de Teste do Avaliador</label>
+                      <p className="text-[11px] text-gray-600 mb-2">O avaliador ja possui expertise em QA. Use este campo para definir o perfil do usuario simulado e o cenario especifico do teste.</p>
+                      <textarea value={evaluatorPrompt} onChange={e => setEvaluatorPrompt(e.target.value)} placeholder="Ex: Simule um cliente irritado que quer cancelar o plano. Seja impaciente e questione os prazos." className="w-full h-24 bg-black border border-gray-700 rounded p-2 text-sm focus:border-blue-500 focus:outline-none" />
                     </div>
                   </div>
                 </div>
