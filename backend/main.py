@@ -248,7 +248,7 @@ class WebhookRequest(BaseModel):
     method: str = "POST"  # POST, GET, PUT, PATCH, DELETE
     auth: WebhookAuthConfig = WebhookAuthConfig()
     headers: Optional[Dict[str, str]] = None
-    payload: Optional[Dict[str, Any]] = None
+    payload: Optional[Any] = None
 
 @app.post("/api/webhook/send")
 async def send_webhook(data: WebhookRequest):
