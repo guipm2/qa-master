@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-    Play, Pause, Terminal, Zap, CheckCircle, ChevronDown, ChevronUp,
+    Play, Square, Terminal, Zap, CheckCircle, ChevronDown, ChevronUp,
     MessageSquare, FileText, Scale, Upload, Trash2, BookOpen, AlertTriangle,
     Loader2, ArrowLeft, Info
 } from "lucide-react";
@@ -60,9 +60,11 @@ export default function CollectionPage() {
     const [tab, setTab] = useState<Tab>("history");
     const [sections, setSections] = useState({ chat: true, prompt: false, analysis: false });
     const [uploading, setUploading] = useState(false);
+    const [stopping, setStopping] = useState(false);
     const fileRef = useRef<HTMLInputElement>(null);
     const logsRef = useRef<HTMLDivElement>(null);
     const chatRef = useRef<HTMLDivElement>(null);
+    const abortRef = useRef<AbortController | null>(null);
 
     const toggle = (s: keyof typeof sections) => setSections(p => ({ ...p, [s]: !p[s] }));
 
@@ -115,18 +117,43 @@ export default function CollectionPage() {
         }
     };
 
+    /* cleanup on unmount (navigating away) */
+    useEffect(() => {
+        return () => { abortRef.current?.abort(); };
+    }, []);
+
     /* UNIFIED START */
     const startTest = async () => {
         if (isRunning) return;
-        setIsRunning(true); setLive([]); setSelected(null); setRunMode(null);
+        const controller = new AbortController();
+        abortRef.current = controller;
+        setIsRunning(true); setLive([]); setSelected(null); setRunMode(null); setStopping(false);
         log("Iniciando teste inteligente...", "info");
         try {
-            const res = await fetch(`${API}/api/collections/${id}/run-smart`, { method: "POST" });
+            const res = await fetch(`${API}/api/collections/${id}/run-smart`, { method: "POST", signal: controller.signal });
             if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
             if (!res.body) throw new Error("Sem corpo de resposta");
             await processSSE(res.body, handleSSE);
-        } catch (e: unknown) { log(`Erro: ${errMsg(e)}`, "error"); }
-        finally { setIsRunning(false); log("Finalizado.", "info"); fetchData(); }
+        } catch (e: unknown) {
+            if (e instanceof DOMException && e.name === "AbortError") {
+                log("Conexao encerrada (navegou ou parou).", "info");
+            } else {
+                log(`Erro: ${errMsg(e)}`, "error");
+            }
+        }
+        finally { setIsRunning(false); setStopping(false); abortRef.current = null; log("Finalizado.", "info"); fetchData(); }
+    };
+
+    /* STOP */
+    const stopTest = async () => {
+        if (!isRunning || stopping) return;
+        setStopping(true);
+        log("Solicitando parada...", "warning");
+        try {
+            await fetch(`${API}/api/collections/${id}/stop`, { method: "POST" });
+        } catch {}
+        // Also abort the SSE stream so the frontend unlocks immediately
+        abortRef.current?.abort();
     };
 
     /* upload */
@@ -191,19 +218,28 @@ export default function CollectionPage() {
                         <div className={clsx("text-xl font-bold", scoreColor(bestScore))}>{bestScore}</div>
                     </div>
 
-                    <button
-                        onClick={startTest}
-                        disabled={isRunning}
-                        className={clsx(
-                            "px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-all text-sm",
-                            isRunning
-                                ? "bg-gray-800 text-gray-400 cursor-not-allowed"
-                                : "bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white hover:scale-105"
-                        )}
-                    >
-                        {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                        {isRunning ? "Rodando..." : "Iniciar Teste"}
-                    </button>
+                    {isRunning ? (
+                        <button
+                            onClick={stopTest}
+                            disabled={stopping}
+                            className={clsx(
+                                "px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-all text-sm",
+                                stopping
+                                    ? "bg-gray-800 text-gray-400 cursor-not-allowed"
+                                    : "bg-red-600 hover:bg-red-500 text-white hover:scale-105"
+                            )}
+                        >
+                            {stopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                            {stopping ? "Parando..." : "Parar Teste"}
+                        </button>
+                    ) : (
+                        <button
+                            onClick={startTest}
+                            className="px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-all text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white hover:scale-105"
+                        >
+                            <Play className="w-4 h-4" /> Iniciar Teste
+                        </button>
+                    )}
                 </div>
             </header>
 
