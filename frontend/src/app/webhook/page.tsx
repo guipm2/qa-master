@@ -65,6 +65,24 @@ export default function WebhookPage() {
     }
   };
 
+  const formatPayload = () => {
+    if (!payload.trim()) return;
+    try {
+      const parsed = JSON.parse(payload);
+      setPayload(JSON.stringify(parsed, null, 2));
+    } catch {
+      // se nao e JSON valido, tenta limpar e parsear de novo
+      // remove quebras de linha e espacos extras pra tentar salvar
+      const cleaned = payload.replace(/\s+/g, " ").trim();
+      try {
+        const parsed = JSON.parse(cleaned);
+        setPayload(JSON.stringify(parsed, null, 2));
+      } catch {
+        setError("Nao foi possivel formatar: JSON invalido.");
+      }
+    }
+  };
+
   const handleSend = async () => {
     if (!url) return;
     if (!validatePayload()) {
@@ -234,20 +252,39 @@ export default function WebhookPage() {
             <div className="glass-card p-4">
               <div className="flex justify-between items-center mb-2">
                 <label className="text-sm text-gray-400">Payload (JSON)</label>
-                <span
-                  className={clsx(
-                    "text-xs px-2 py-0.5 rounded",
-                    validatePayload()
-                      ? "bg-green-900/50 text-green-400"
-                      : "bg-red-900/50 text-red-400"
-                  )}
-                >
-                  {validatePayload() ? "JSON Válido" : "JSON Inválido"}
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={formatPayload}
+                    disabled={!payload.trim()}
+                    className="text-[11px] px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed font-medium"
+                    title="Formatar JSON (identacao e quebras de linha)"
+                  >
+                    Formatar
+                  </button>
+                  <span
+                    className={clsx(
+                      "text-xs px-2 py-0.5 rounded",
+                      validatePayload()
+                        ? "bg-green-900/50 text-green-400"
+                        : "bg-red-900/50 text-red-400"
+                    )}
+                  >
+                    {validatePayload() ? "JSON Valido" : "JSON Invalido"}
+                  </span>
+                </div>
               </div>
               <textarea
                 value={payload}
                 onChange={(e) => setPayload(e.target.value)}
+                onPaste={() => {
+                  // auto-format on paste after a tick so the state updates first
+                  setTimeout(() => {
+                    setPayload(prev => {
+                      try { return JSON.stringify(JSON.parse(prev), null, 2); }
+                      catch { return prev; }
+                    });
+                  }, 50);
+                }}
                 placeholder='{"key": "value"}'
                 spellCheck={false}
                 className="w-full h-64 bg-black border border-gray-700 rounded-lg p-4 text-sm font-mono focus:border-green-500 focus:outline-none resize-none"
