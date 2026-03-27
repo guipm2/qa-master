@@ -1,54 +1,74 @@
-# 🎯 QA Master
+# QA Master
 
-Sistema de testes automatizados para agentes conversacionais (AI agents) com suporte a personas.
+Sistema de testes automatizados e otimizacao de prompts para agentes conversacionais de IA. Testa, avalia e melhora agentes iterativamente usando documentos de referencia como gabarito.
 
-## 📋 Visão Geral
+## Visao Geral
 
-O QA Master permite testar agentes de IA de forma automatizada, utilizando:
-- **Agente Testador**: Simula clientes com diferentes personas
-- **Agente Sujeito**: O agente sendo testado
-- **Agente Juiz**: Analisa e pontua cada conversa
+O QA Master executa loops de teste-avaliacao-otimizacao para agentes de IA:
 
-## 🏗️ Arquitetura
+1. **Evaluator** (Claude Opus 4.6) simula um usuario real interagindo com o agente
+2. **Subject** (OpenAI, modelo configuravel) e o agente sendo testado
+3. **Judge** (Claude Opus 4.6) avalia a conversa e gera scores detalhados
+4. **Optimizer** (Claude Opus 4.6) melhora o prompt com base no feedback do Judge
+5. **Verifier** (Claude Opus 4.6) audita integridade do prompt otimizado
+
+O sistema detecta automaticamente se ha documentos de referencia (playbooks, regras, blueprints) e escolhe o fluxo adequado:
+- **Modo Padrao**: Judge avalia qualidade geral (target score: 90)
+- **Modo Documental**: Document Judge compara comportamento do agente com os documentos (target score: 80)
+
+## Arquitetura
 
 ```
 QA Master/
-├── backend/                    # FastAPI + Python
-│   ├── main.py                # API endpoints
-│   ├── agents.py              # Configuração dos agentes Agno
-│   ├── models.py              # Modelos Pydantic
-│   ├── database.py            # Integração Supabase
-│   ├── core/                  # Sistema de Personas
-│   │   ├── persona_injector.py
-│   │   └── personas_genericas_puras.json
-│   ├── tests/                 # Executor de Testes
-│   │   └── test_executor.py
-│   └── prompts_teste/         # Prompts de cenários
+├── backend/                        # FastAPI + Python
+│   ├── main.py                     # API endpoints (CRUD, smart-run, webhook, docs)
+│   ├── agents.py                   # Agentes Agno (subject, evaluator, judge, doc-judge)
+│   ├── optimizer.py                # Optimizer + Verifier agents
+│   ├── models.py                   # Pydantic schemas (EvaluationResult, DocumentEvaluationResult)
+│   ├── database.py                 # Supabase client (collections, runs, documents)
+│   ├── document_parser.py          # Parser de PDF, MD, TXT
+│   ├── prompts/                    # Prompts especializados dos agentes auxiliares
+│   │   ├── prompt_evaluator_agent.md
+│   │   ├── prompt_judge_agent.md
+│   │   ├── prompt_document_judge.md
+│   │   ├── prompt_optimizer_agent.md
+│   │   └── prompt_verifier_agent.md
+│   └── migrations/                 # SQL para Supabase
+│       ├── add_subject_model.sql
+│       └── add_reference_documents.sql
 │
-└── frontend/                   # Next.js + React
+└── frontend/                       # Next.js + React + TypeScript
     └── src/app/
-        ├── page.tsx           # Dashboard de Coleções
-        └── collections/[id]/  # Detalhes da Coleção
+        ├── page.tsx                # Dashboard de colecoes
+        ├── collections/[id]/       # Studio de testes (chat, logs, historico, docs)
+        └── webhook/                # Webhook dispatcher
 ```
 
-## 🚀 Instalação
+## Instalacao
 
 ### Backend
 
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
-
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # Linux/Mac
 pip install -r requirements.txt
 ```
 
-Crie um arquivo `.env`:
+Crie o arquivo `.env`:
 ```env
 SUPABASE_URL=sua_url
 SUPABASE_KEY=sua_key
-OPENAI_API_KEY=sua_key
+
+DB_USER=seu_user
+DB_PASSWORD=sua_senha
+DB_HOST=seu_host
+DB_PORT=5432
+DB_NAME=postgres
+
+OPENAI_API_KEY=sua_key_openai
+ANTHROPIC_API_KEY=sua_key_anthropic
 ```
 
 ### Frontend
@@ -58,7 +78,13 @@ cd frontend
 npm install
 ```
 
-## ▶️ Executando
+### Database (Supabase)
+
+Execute as migrations na ordem:
+1. `backend/migrations/add_subject_model.sql`
+2. `backend/migrations/add_reference_documents.sql`
+
+## Executando
 
 ### Backend (porta 8000)
 ```bash
@@ -75,106 +101,97 @@ npm run dev
 
 Acesse: http://localhost:3000
 
-## ✨ Funcionalidades
+## Funcionalidades
 
-### Dashboard de Coleções
-- Criar/editar/excluir coleções de testes
-- Configurar Max Turnos (1-50)
-- Configurar Nº de Personas (1-20)
-- Definir prompts do agente sujeito e avaliador
+### Teste Inteligente (botao unico)
+- Detecta automaticamente se ha documentos de referencia na colecao
+- Com documentos: usa Document Judge para avaliar aderencia a playbooks/regras
+- Sem documentos: usa Judge padrao para avaliar qualidade geral
+- Loop automatico: testa -> avalia -> otimiza -> repete ate atingir score alvo
+- Botao de parada para interromper teste em andamento
+- Navegacao livre enquanto o teste roda
 
-### Sistema de Personas
-20 personas genéricas com comportamentos distintos:
-- O Desconfiado, O Apressado, O Confuso
-- O Detalhista, O Indeciso, O Gentil
-- E mais 14 perfis comportamentais
+### Documentos de Referencia
+- Upload de PDFs, Markdowns e TXTs como gabarito
+- O Document Judge compara comportamento do agente com os documentos
+- 7 metricas de aderencia: compliance, tom/estilo, escopo, violacoes, comportamentos obrigatorios, alinhamento com padroes
+- Cada violacao vem com trecho do documento, trecho da resposta e sugestao de correcao
 
-### Modos de Seleção de Personas
-```python
-from tests.test_executor import selecionar_personas
+### Webhook Dispatcher
+- Envio de payloads para qualquer webhook externo
+- Suporte a autenticacao: Bearer, API Key, Basic Auth
+- Editor de JSON com auto-formatacao (formata ao colar)
+- Visualizacao de resposta com status, headers e body
 
-# Aleatório (padrão)
-personas = selecionar_personas(5, modo="aleatorio")
+### Metricas de Avaliacao
 
-# Sequencial (PERSONA_001, PERSONA_002, ...)
-personas = selecionar_personas(5, modo="sequencial")
+**Modo Padrao (5 dimensoes):**
+- Compliance, Eficacia, Eficiencia, Qualidade de Comunicacao, Experiencia do Usuario
 
-# Diversificado (distribuído uniformemente)
-personas = selecionar_personas(5, modo="diversificado")
-```
+**Modo Documental (6 dimensoes):**
+- Compliance Documental, Tom e Estilo, Aderencia ao Escopo, Violacoes de Regras, Comportamentos Obrigatorios, Alinhamento com Padroes
 
-### Execução de Testes
-```python
-from tests.test_executor import executar_bateria_com_analise_juiz
+### Resiliencia
+- Retry com exponential backoff para erros 529/overloaded da API
+- Ate 5 tentativas com espera crescente (2s, 4s, 8s, 16s, 32s)
 
-resultado = executar_bateria_com_analise_juiz(
-    prompt_teste_path="prompts_teste/meu_teste.md",
-    num_personas=5,
-    agente_alvo=meu_agente,
-    agente_juiz=juiz,
-    max_turnos=20
-)
-```
-
-### Análise Consolidada
-O juiz analisa cada teste individualmente e gera:
-- Score por persona (0-100)
-- Pontos fortes e fracos recorrentes
-- Taxa de aprovação geral
-- Recomendações prioritárias
-
-## 📊 Estrutura de Resultados
-
-```json
-{
-  "session_id": "SESSION_ABC123",
-  "num_personas": 5,
-  "max_turnos_por_teste": 20,
-  "analise_geral": {
-    "total_testes": 5,
-    "testes_aprovados": 4,
-    "taxa_aprovacao": 80.0,
-    "score_medio_geral": 85,
-    "pontos_fortes_recorrentes": [...],
-    "pontos_fracos_recorrentes": [...],
-    "conclusao": "O agente teve excelente desempenho..."
-  }
-}
-```
-
-## 🗄️ Database (Supabase)
+## Database (Supabase)
 
 ### Tabela: collections
-| Campo | Tipo | Descrição |
+| Campo | Tipo | Descricao |
 |-------|------|-----------|
-| id | UUID | ID único |
-| name | TEXT | Nome da coleção |
-| description | TEXT | Descrição |
-| base_subject_instruction | TEXT | Prompt do agente |
-| base_evaluator_instruction | TEXT | Prompt do avaliador |
-| max_turns | INT | Max interações (padrão: 20) |
-| num_personas | INT | Nº de personas (padrão: 5) |
-| openai_api_key | TEXT | Chave da API |
-| created_at | TIMESTAMP | Data de criação |
+| id | UUID | ID unico |
+| name | TEXT | Nome da colecao |
+| description | TEXT | Descricao |
+| base_subject_instruction | TEXT | Prompt base do agente testado |
+| base_evaluator_instruction | TEXT | Cenario de teste do avaliador |
+| openai_api_key | TEXT | Chave da API OpenAI |
+| subject_model | TEXT | Modelo OpenAI (default: gpt-5.2) |
+| max_turns | INT | Max interacoes por teste |
+| num_personas | INT | Numero de personas |
 
 ### Tabela: test_runs
-| Campo | Tipo | Descrição |
+| Campo | Tipo | Descricao |
 |-------|------|-----------|
-| id | UUID | ID único |
+| id | UUID | ID unico |
 | collection_id | UUID | FK para collections |
-| iteration | INT | Número da iteração |
-| status | TEXT | running/completed/failed |
+| iteration | INT | Numero da iteracao |
+| status | TEXT | running/completed/failed/stopped |
 | transcript | JSONB | Conversa completa |
-| evaluation_result | JSONB | Resultado da análise |
+| evaluation_result | JSONB | Resultado da analise |
 | score | FLOAT | Score final |
 
-## 🛠️ Tecnologias
+### Tabela: reference_documents
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| id | UUID | ID unico |
+| collection_id | UUID | FK para collections |
+| filename | TEXT | Nome do arquivo |
+| file_type | TEXT | pdf/md/txt |
+| content_text | TEXT | Conteudo extraido |
+| file_size_bytes | INT | Tamanho do arquivo |
 
-- **Backend**: Python, FastAPI, Agno, OpenAI
-- **Frontend**: Next.js, React, TypeScript, TailwindCSS
+### Tabela: document_test_runs
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| id | UUID | ID unico |
+| collection_id | UUID | FK para collections |
+| status | TEXT | running/completed/failed/stopped |
+| subject_instruction | TEXT | Prompt usado |
+| document_ids | UUID[] | IDs dos documentos usados |
+| transcript | JSONB | Conversa completa |
+| evaluation_result | JSONB | Resultado da analise documental |
+| score | FLOAT | Score de aderencia |
+
+## Tecnologias
+
+- **Backend**: Python, FastAPI, Agno Framework
+- **IA (agente testado)**: OpenAI (GPT-5.2 default, configuravel)
+- **IA (agentes auxiliares)**: Anthropic Claude Opus 4.6
+- **Frontend**: Next.js 16, React, TypeScript, TailwindCSS
 - **Database**: Supabase (PostgreSQL)
 - **UI**: Framer Motion, Lucide Icons
 
-## 📄 Licença
+## Licenca
 
 MIT License
