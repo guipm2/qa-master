@@ -554,16 +554,17 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
 
-    # Se ja tem teste rodando, rejeita
-    existing = _get_session(collection_id)
-    if existing and not existing.finished:
-        raise HTTPException(status_code=409, detail="Ja existe um teste em andamento para esta colecao")
+    # Se ja tem teste rodando, rejeita — lock garante atomicidade do check-then-create
+    async with _session_lock:
+        existing = _get_session(collection_id)
+        if existing and not existing.finished:
+            raise HTTPException(status_code=409, detail="Já existe um teste em andamento para esta coleção")
 
-    documents = get_collection_documents(collection_id)
-    has_documents = len(documents) > 0
+        documents = get_collection_documents(collection_id)
+        has_documents = len(documents) > 0
 
-    session = TestSession(collection_id)
-    _sessions[collection_id] = session
+        session = TestSession(collection_id)
+        _sessions[collection_id] = session
 
     async def _run_test_loop():
         s = session  # alias
