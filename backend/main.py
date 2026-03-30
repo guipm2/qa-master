@@ -419,22 +419,21 @@ async def run_optimization_stream(collection_id: str):
                         current_role = "subject"
                         prompt = last_message
 
-                    response = agent.run(prompt)
+                    response = await _run_agent_with_retry(agent, prompt, label=current_role)
                     content = response.content
-                    
+
                     last_message = content
                     transcript_str += f"{current_role.upper()}: {content}\n\n"
                     transcript_objs.append({"role": current_role, "content": content})
-                    
-                    # Yield realtime message (opcional, pode poluir se for muito rápido, mas legal para ver)
+
                     yield f"data: {json.dumps({'type': 'message', 'role': current_role, 'content': content})}\n\n"
-                    
+
                     sender = "subject" if sender == "evaluator" else "evaluator"
-                    await asyncio.sleep(0.1) # Rápido
+                    await asyncio.sleep(0.1)
 
                 # --- AVALIAÇÃO ---
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Avaliando...'})}\n\n"
-                eval_response = judge.run(f"Transcrição:\n{transcript_str}")
+                eval_response = await _run_agent_with_retry(judge, f"Transcrição:\n{transcript_str}", label="judge")
                 result_data = _coerce_standard_evaluation(eval_response.content)
                 result_json = _to_dict(result_data)
                 score = result_data.scores.score_geral
@@ -472,17 +471,20 @@ async def run_optimization_stream(collection_id: str):
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Otimizando prompt...'})}\n\n"
 
                 opt_agent = create_optimizer_agent()
-                new_prompt = generate_improved_prompt(opt_agent, current_subject_instruction, result_data, best_prompt=best_subject_instruction)
-                
+                new_prompt = await asyncio.to_thread(
+                    generate_improved_prompt, opt_agent, current_subject_instruction, result_data,
+                    best_subject_instruction
+                )
+
                 current_subject_instruction = new_prompt
                 current_iteration += 1
                 iteration_count += 1
-                
+
                 yield f"data: {json.dumps({'type': 'optimization', 'new_prompt': new_prompt})}\n\n"
-                await asyncio.sleep(1) 
+                await asyncio.sleep(1)
 
             except Exception as e:
-                print(f"Erro no loop: {e}")
+                logger.exception("Erro no loop /run")
                 update_test_run(run_id, {"status": "failed"})
                 yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
                 break
@@ -902,7 +904,7 @@ async def run_document_test(collection_id: str):
                         current_role = "subject"
                         prompt = last_message
 
-                    response = agent.run(prompt)
+                    response = await _run_agent_with_retry(agent, prompt, label=current_role)
                     content = response.content
 
                     last_message = content
@@ -933,7 +935,7 @@ Analise a conversa comparando com os documentos de referência acima.
 Avalie cada dimensão conforme as instruções.
 """
 
-                eval_response = document_judge.run(judge_input)
+                eval_response = await _run_agent_with_retry(document_judge, judge_input, label="document_judge")
                 result_data = _coerce_document_evaluation(eval_response.content)
                 result_json = _to_dict(result_data)
                 result_json["documentos_utilizados"] = doc_names
@@ -969,12 +971,9 @@ Avalie cada dimensão conforme as instruções.
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Otimizando prompt com base nos documentos e avaliação...'})}\n\n"
 
                 opt_agent = create_optimizer_agent()
-                new_prompt = generate_improved_prompt(
-                    opt_agent,
-                    current_subject_instruction,
-                    result_data,
-                    best_prompt=best_subject_instruction,
-                    documents_context=documents_context,
+                new_prompt = await asyncio.to_thread(
+                    generate_improved_prompt, opt_agent, current_subject_instruction, result_data,
+                    best_subject_instruction, documents_context,
                 )
 
                 current_subject_instruction = new_prompt
@@ -984,9 +983,7 @@ Avalie cada dimensão conforme as instruções.
                 await asyncio.sleep(1)
 
             except Exception as e:
-                print(f"Erro no loop de teste com documentos: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.exception("Erro no loop /run-document-test")
                 update_document_test_run(run_id, {"status": "failed"})
                 yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
                 break
