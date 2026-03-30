@@ -580,6 +580,7 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
             documents_context = ""
             doc_ids: List[str] = []
             doc_names: List[str] = []
+            run_count_offset = 0
             if has_documents:
                 TARGET_SCORE = 80
                 for doc in documents:
@@ -591,6 +592,7 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
             else:
                 TARGET_SCORE = 90
                 runs = get_collection_runs(collection_id)
+                run_count_offset = len(runs)
                 if runs:
                     current_subject_instruction = runs[-1]["subject_instruction"]
                 s.emit({"type": "mode", "mode": "standard", "document_count": 0})
@@ -635,7 +637,7 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                 else:
                     run_record = create_test_run(TestRunCreate(
                         collection_id=collection_id,
-                        iteration=current_iteration + len(get_collection_runs(collection_id)),
+                        iteration=run_count_offset + current_iteration,
                         status="running",
                         subject_instruction=current_subject_instruction
                     ))
