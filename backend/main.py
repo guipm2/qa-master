@@ -198,21 +198,27 @@ def _to_dict(data: Any) -> Dict[str, Any]:
 def _coerce_standard_evaluation(data: Any) -> EvaluationResult:
     if isinstance(data, EvaluationResult):
         return data
-
-    payload = _to_dict(data)
-    if hasattr(EvaluationResult, "model_validate"):
-        return EvaluationResult.model_validate(payload)
-    return EvaluationResult.parse_obj(payload)
+    try:
+        payload = _to_dict(data)
+        if hasattr(EvaluationResult, "model_validate"):
+            return EvaluationResult.model_validate(payload)
+        return EvaluationResult.parse_obj(payload)
+    except Exception as e:
+        logger.error("Falha ao converter resultado de avaliação padrão: %s | dados: %.200s", e, repr(data))
+        raise ValueError(f"Resposta do Judge inválida ou incompleta: {e}") from e
 
 
 def _coerce_document_evaluation(data: Any) -> DocumentEvaluationResult:
     if isinstance(data, DocumentEvaluationResult):
         return data
-
-    payload = _to_dict(data)
-    if hasattr(DocumentEvaluationResult, "model_validate"):
-        return DocumentEvaluationResult.model_validate(payload)
-    return DocumentEvaluationResult.parse_obj(payload)
+    try:
+        payload = _to_dict(data)
+        if hasattr(DocumentEvaluationResult, "model_validate"):
+            return DocumentEvaluationResult.model_validate(payload)
+        return DocumentEvaluationResult.parse_obj(payload)
+    except Exception as e:
+        logger.error("Falha ao converter resultado de avaliação documental: %s | dados: %.200s", e, repr(data))
+        raise ValueError(f"Resposta do Document Judge inválida ou incompleta: {e}") from e
 
 app.add_middleware(
     CORSMiddleware,
