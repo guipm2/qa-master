@@ -1,10 +1,13 @@
 import os
+import logging
 from supabase import create_client, Client
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import uuid
 from datetime import datetime
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -79,7 +82,7 @@ def create_collection(data: CollectionCreate) -> Dict[str, Any]:
     except Exception as e:
         # Fallback: Se a coluna subject_model não existir, tenta salvar sem ela
         if "subject_model" in str(e) or "PGRST204" in str(e):
-            print("AVISO: Coluna 'subject_model' não encontrada. Salvando sem preferencia de modelo.")
+            logger.warning("Coluna 'subject_model' não encontrada. Salvando sem preferência de modelo.")
             payload.pop("subject_model", None)
             response = supabase.table("collections").insert(payload).execute()
             return _first_row_or_error(response, "create_collection_fallback")
@@ -100,7 +103,7 @@ def update_collection(collection_id: str, updates: Dict[str, Any]) -> Dict[str, 
     except Exception as e:
         # Fallback: Se a coluna subject_model não existir, tenta atualizar sem ela
         if "subject_model" in str(e) or "PGRST204" in str(e):
-            print("AVISO: Coluna 'subject_model' não encontrada. Atualizando sem preferencia de modelo.")
+            logger.warning("Coluna 'subject_model' não encontrada. Atualizando sem preferência de modelo.")
             updates.pop("subject_model", None)
             response = supabase.table("collections").update(updates).eq("id", collection_id).execute()
             return _first_row_or_error(response, "update_collection_fallback")

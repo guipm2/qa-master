@@ -145,7 +145,7 @@ async def _run_agent_with_retry(agent, prompt: str, label: str = "agent") -> Any
             is_retryable = "529" in err_str or "overloaded" in err_str.lower() or "rate" in err_str.lower()
             if is_retryable and attempt < MAX_RETRIES:
                 delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                print(f"[RETRY] {label} tentativa {attempt}/{MAX_RETRIES} falhou (overloaded). Aguardando {delay}s...")
+                logger.warning("[RETRY] %s tentativa %d/%d falhou (overloaded). Aguardando %.0fs...", label, attempt, MAX_RETRIES, delay)
                 await asyncio.sleep(delay)
                 continue
             raise
@@ -773,8 +773,7 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                     await asyncio.sleep(1)
 
                 except Exception as e:
-                    import traceback
-                    traceback.print_exc()
+                    logger.exception("Erro na iteração %d do loop run-smart", current_iteration)
                     error_str = str(e)
                     stage_labels = {"conversation": "Conversa", "evaluation": "Avaliação", "optimization": "Otimização"}
                     update_fn(run_id, {
