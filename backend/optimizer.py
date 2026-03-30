@@ -1,21 +1,10 @@
-import os
 from typing import Union
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from models import EvaluationResult, DocumentEvaluationResult
+from utils import read_prompt
 
 CLAUDE_MODEL_ID = "claude-opus-4-6"
-
-
-def _read_prompt(filename: str, fallback: str = "") -> str:
-    """Lê um arquivo de prompt da pasta prompts/."""
-    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", filename)
-    try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            return f.read()
-    except Exception as e:
-        print(f"AVISO: Não foi possível ler {prompt_path}: {e}")
-        return fallback
 
 
 def create_optimizer_agent() -> Agent:
@@ -23,7 +12,7 @@ def create_optimizer_agent() -> Agent:
     Cria um agente Otimizador de Prompts usando Claude Opus 4.6.
     Suporta feedback tanto do Judge padrão quanto do Document Judge.
     """
-    optimizer_instructions = _read_prompt(
+    optimizer_instructions = read_prompt(
         "prompt_optimizer_agent.md",
         "Você é um especialista em otimização de prompts. Gere uma versão melhorada do prompt corrigindo as falhas sem perder informações."
     )
@@ -40,7 +29,7 @@ def create_verifier_agent() -> Agent:
     """
     Cria um agente Verificador de Integridade de Prompts usando Claude Opus 4.6.
     """
-    verifier_instructions = _read_prompt(
+    verifier_instructions = read_prompt(
         "prompt_verifier_agent.md",
         "Compare o prompt original com o gerado e garanta que nenhuma informação foi perdida. Retorne o prompt final corrigido."
     )

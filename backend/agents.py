@@ -1,11 +1,11 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.models.anthropic import Claude
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
 from models import TestConfig, EvaluationResult, DocumentEvaluationResult
+from utils import read_prompt
 
 # Modelo Claude usado para todos os agentes auxiliares (avaliador, juiz, otimizador)
 CLAUDE_MODEL_ID = "claude-opus-4-6"
@@ -53,23 +53,12 @@ def create_subject_agent(config: TestConfig, model_id: str = DEFAULT_SUBJECT_MOD
     )
 
 
-def _read_prompt(filename: str, fallback: str = "") -> str:
-    """Lê um arquivo de prompt da pasta prompts/."""
-    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", filename)
-    try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            return f.read()
-    except Exception as e:
-        print(f"AVISO: Não foi possível ler {prompt_path}: {e}")
-        return fallback
-
-
 def create_evaluator_agent(config: TestConfig) -> Agent:
     """
     Cria o agente que conduz o teste (O Avaliador).
     Usa Claude Opus 4.6 com prompt especializado de QA.
     """
-    evaluator_prompt = _read_prompt("prompt_evaluator_agent.md")
+    evaluator_prompt = read_prompt("prompt_evaluator_agent.md")
 
     return Agent(
         model=_get_claude_model(),
@@ -87,7 +76,7 @@ def create_judge_agent(config: TestConfig) -> Agent:
     Agente juiz que analisa a transcrição e produz o relatório final.
     Usa Claude Opus 4.6 com prompt especializado de avaliação.
     """
-    judge_instructions = _read_prompt(
+    judge_instructions = read_prompt(
         "prompt_judge_agent.md",
         "Analise a conversa e avalie o desempenho do Agente Sujeito. Retorne JSON em Português do Brasil."
     )
@@ -106,7 +95,7 @@ def create_document_judge_agent() -> Agent:
     Agente juiz especializado em avaliar aderência a documentos de referência.
     Usa Claude Opus 4.6 com prompt especializado de auditoria documental.
     """
-    judge_instructions = _read_prompt(
+    judge_instructions = read_prompt(
         "prompt_document_judge.md",
         "Analise a conversa comparando com os documentos de referência. Retorne JSON em Português do Brasil."
     )

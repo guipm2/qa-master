@@ -24,8 +24,6 @@ from database import (
     create_test_run,
     update_test_run,
     get_collection_runs,
-    update_test_run,
-    get_collection_runs,
     update_collection,
     delete_collection,
     CollectionCreate,
