@@ -230,6 +230,18 @@ app.add_middleware(
 def read_root():
     return {"message": "QA Master Backend está rodando"}
 
+
+@app.get("/health")
+def health_check():
+    """Verifica conectividade com o banco e retorna status do servidor."""
+    from database import supabase
+    try:
+        supabase.table("collections").select("id").limit(1).execute()
+        return {"status": "healthy", "sessions_active": sum(1 for s in _sessions.values() if not s.finished)}
+    except Exception as e:
+        logger.error("Health check falhou: %s", e)
+        raise HTTPException(status_code=503, detail="Banco de dados indisponível")
+
 # --- Endpoint para listar modelos disponíveis ---
 
 @app.get("/api/models")
