@@ -158,18 +158,42 @@ def _get_allowed_origins() -> List[str]:
 
 
 def _is_private_or_local_host(hostname: str) -> bool:
+    """
+    Retorna True se o hostname resolver para um endereço privado/local.
+    Resolve DNS para evitar bypass via hostname que aponta para IP interno.
+    """
+    import socket
+
     if not hostname:
         return True
 
     normalized = hostname.strip().lower()
-    if normalized in {"localhost", "127.0.0.1", "::1"}:
+
+    # Remove colchetes de IPv6 literal (ex: [::1])
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+
+    # Blocklist explícita
+    if normalized in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
         return True
 
+    # Verifica se é um IP diretamente
     try:
-        ip = ipaddress.ip_address(normalized)
-        return ip.is_private or ip.is_loopback or ip.is_link_local
+        ip_obj = ipaddress.ip_address(normalized)
+        return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved
     except ValueError:
-        return normalized.endswith(".local")
+        pass
+
+    # É um hostname — resolve para IP e verifica
+    if normalized.endswith(".local"):
+        return True
+    try:
+        resolved_ip = socket.gethostbyname(normalized)
+        ip_obj = ipaddress.ip_address(resolved_ip)
+        return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved
+    except (OSError, ValueError):
+        # Se não resolver, bloqueia por precaução
+        return True
 
 
 def _validate_webhook_url(raw_url: str) -> str:
