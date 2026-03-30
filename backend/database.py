@@ -10,9 +10,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Initialize Supabase Client
-# Ensure SUPABASE_URL and SUPABASE_KEY are set in environment variables
 url: str = os.environ.get("SUPABASE_URL", "")
 key: str = os.environ.get("SUPABASE_KEY", "")
+
+if not url or not key:
+    raise RuntimeError(
+        "Variáveis de ambiente obrigatórias ausentes: SUPABASE_URL e SUPABASE_KEY. "
+        "Verifique o arquivo .env na pasta backend/."
+    )
 
 supabase: Client = create_client(url, key)
 
