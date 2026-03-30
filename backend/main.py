@@ -345,9 +345,10 @@ async def send_webhook(data: WebhookRequest):
             "elapsed_ms": response.elapsed.total_seconds() * 1000
         }
     except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Webhook timeout - o servidor não respondeu em 30s")
+        raise HTTPException(status_code=504, detail="Webhook timeout — o servidor não respondeu em 30s")
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Erro de conexão: {str(e)}")
+        logger.error("Webhook request error: %s", e)
+        raise HTTPException(status_code=502, detail="Falha ao conectar ao webhook")
 
 
 # --- Endpoint de Otimização (Loop) ---
@@ -814,8 +815,11 @@ async def upload_document(collection_id: str, file: UploadFile = File(...)):
 
     try:
         content_text = parse_document(filename, file_bytes)
-    except Exception as e:
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Erro ao processar documento: {str(e)}")
+    except Exception as e:
+        logger.error("Erro inesperado ao processar documento '%s': %s", filename, e)
+        raise HTTPException(status_code=500, detail="Erro interno ao processar o documento")
 
     if not content_text.strip():
         raise HTTPException(status_code=400, detail="Documento vazio ou sem texto extraível")

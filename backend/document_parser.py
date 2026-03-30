@@ -2,18 +2,36 @@
 Parser de documentos para extrair texto de PDF, Markdown e TXT.
 """
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def parse_pdf(file_bytes: bytes) -> str:
     """Extrai texto de um arquivo PDF."""
-    from PyPDF2 import PdfReader
-    reader = PdfReader(io.BytesIO(file_bytes))
-    text_parts = []
-    for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            text_parts.append(text)
-    return "\n\n".join(text_parts)
+    try:
+        from PyPDF2 import PdfReader
+        from PyPDF2.errors import PdfReadError
+    except ImportError:
+        from PyPDF2 import PdfReader, PdfReadError  # type: ignore
+
+    try:
+        reader = PdfReader(io.BytesIO(file_bytes))
+        text_parts = []
+        for i, page in enumerate(reader.pages):
+            try:
+                text = page.extract_text()
+                if text:
+                    text_parts.append(text)
+            except Exception as e:
+                logger.warning("Falha ao extrair texto da página %d do PDF: %s", i, e)
+        if not text_parts:
+            raise ValueError("Nenhum texto pôde ser extraído do PDF (arquivo protegido ou sem texto)")
+        return "\n\n".join(text_parts)
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(f"PDF inválido ou corrompido: {type(e).__name__}") from e
 
 
 def parse_markdown(file_bytes: bytes) -> str:
