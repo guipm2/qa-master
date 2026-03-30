@@ -1,5 +1,7 @@
 import json
 import asyncio
+import time
+import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List
 import os
 import uuid
@@ -10,6 +12,8 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from models import TestConfig, EvaluationResult
 from agents import create_subject_agent, create_evaluator_agent, create_judge_agent, create_document_judge_agent, AVAILABLE_MODELS
@@ -44,6 +48,11 @@ from models import DocumentEvaluationResult
 
 app = FastAPI(title="QA Master Backend")
 
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(_cleanup_sessions())
+
 MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
 MAX_RETRIES = 5
 RETRY_BASE_DELAY = 2.0
@@ -54,12 +63,16 @@ RETRY_BASE_DELAY = 2.0
 # Events are buffered so clients can reconnect at any time.
 # ══════════════════════════════════════════════════════════
 
+SESSION_TTL_SECONDS = 3600  # Sessões finalizadas ficam 1h em memória
+
+
 class TestSession:
     """Holds state for a running (or finished) test."""
     def __init__(self, collection_id: str):
         self.collection_id = collection_id
         self.events: List[Dict[str, Any]] = []
         self.finished = False
+        self.finished_at: Optional[float] = None
         self.stop_requested = False
         self._waiters: List[asyncio.Event] = []
 
@@ -70,6 +83,10 @@ class TestSession:
 
     def request_stop(self) -> None:
         self.stop_requested = True
+
+    def mark_finished(self) -> None:
+        self.finished = True
+        self.finished_at = time.monotonic()
 
     async def wait_for_new(self) -> None:
         ev = asyncio.Event()
@@ -83,10 +100,27 @@ class TestSession:
 
 
 _sessions: Dict[str, TestSession] = {}
+_session_lock = asyncio.Lock()
 
 
 def _get_session(collection_id: str) -> Optional[TestSession]:
     return _sessions.get(collection_id)
+
+
+async def _cleanup_sessions() -> None:
+    """Remove sessões finalizadas mais antigas que SESSION_TTL_SECONDS."""
+    while True:
+        await asyncio.sleep(300)  # roda a cada 5 minutos
+        now = time.monotonic()
+        to_delete = [
+            cid for cid, s in list(_sessions.items())
+            if s.finished and s.finished_at is not None
+            and (now - s.finished_at) > SESSION_TTL_SECONDS
+        ]
+        for cid in to_delete:
+            _sessions.pop(cid, None)
+        if to_delete:
+            logger.info(f"[session_cleanup] Removidas {len(to_delete)} sessão(ões) expiradas.")
 
 
 async def _run_agent_with_retry(agent, prompt: str, label: str = "agent") -> Any:
@@ -726,11 +760,11 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
                 s.emit({"type": "done", "reason": "max_iterations"})
 
         except Exception as e:
-            print(f"Erro fatal no test loop: {e}")
+            logger.exception("Erro fatal no test loop")
             s.emit({"type": "error", "content": str(e)})
             s.emit({"type": "done", "reason": "fatal_error"})
         finally:
-            s.finished = True
+            s.mark_finished()
 
     # Lanca como background task
     asyncio.create_task(_run_test_loop())
