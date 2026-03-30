@@ -56,6 +56,7 @@ async def startup_event():
 MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
 MAX_RETRIES = 5
 RETRY_BASE_DELAY = 2.0
+MAX_DOCUMENTS_CONTEXT_CHARS = 200_000  # ~50k tokens — limite conservador para Claude
 
 # ══════════════════════════════════════════════════════════
 # Background test infrastructure
@@ -600,12 +601,20 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
             run_count_offset = 0
             if has_documents:
                 TARGET_SCORE = 80
+                truncated_docs = 0
                 for doc in documents:
-                    documents_context += f"\n\n{'='*60}\nDOCUMENTO: {doc['filename']}\n{'='*60}\n{doc['content_text']}\n{'='*60}\n"
+                    section = f"\n\n{'='*60}\nDOCUMENTO: {doc['filename']}\n{'='*60}\n{doc['content_text']}\n{'='*60}\n"
+                    if len(documents_context) + len(section) > MAX_DOCUMENTS_CONTEXT_CHARS:
+                        truncated_docs += 1
+                        logger.warning("Contexto de documentos excedeu %d chars; '%s' ignorado.", MAX_DOCUMENTS_CONTEXT_CHARS, doc['filename'])
+                        continue
+                    documents_context += section
                 doc_ids = [doc["id"] for doc in documents]
                 doc_names = [doc["filename"] for doc in documents]
                 s.emit({"type": "mode", "mode": "document", "document_count": len(documents), "document_names": doc_names})
                 s.emit({"type": "status", "content": f"Modo Documental: {len(documents)} documento(s) detectado(s)"})
+                if truncated_docs:
+                    s.emit({"type": "warning", "content": f"{truncated_docs} documento(s) ignorado(s) por exceder o limite de contexto"})
             else:
                 TARGET_SCORE = 90
                 runs = get_collection_runs(collection_id)
@@ -870,17 +879,21 @@ async def run_document_test(collection_id: str):
         doc_ids = [doc["id"] for doc in documents]
         doc_names = [doc["filename"] for doc in documents]
 
-        # Concatenar conteúdo dos documentos
+        # Concatenar conteúdo dos documentos respeitando limite de contexto
         documents_context = ""
+        truncated_docs = 0
         for doc in documents:
-            documents_context += f"\n\n{'='*60}\n"
-            documents_context += f"DOCUMENTO: {doc['filename']}\n"
-            documents_context += f"{'='*60}\n"
-            documents_context += doc["content_text"]
-            documents_context += f"\n{'='*60}\n"
+            section = f"\n\n{'='*60}\nDOCUMENTO: {doc['filename']}\n{'='*60}\n{doc['content_text']}\n{'='*60}\n"
+            if len(documents_context) + len(section) > MAX_DOCUMENTS_CONTEXT_CHARS:
+                truncated_docs += 1
+                logger.warning("Contexto excedeu %d chars; '%s' ignorado.", MAX_DOCUMENTS_CONTEXT_CHARS, doc['filename'])
+                continue
+            documents_context += section
 
         yield f"data: {json.dumps({'type': 'status', 'content': f'Iniciando loop de teste com {len(documents)} documento(s) de referência...'})}\n\n"
         yield f"data: {json.dumps({'type': 'status', 'content': f'Documentos: {chr(44).join(doc_names)}'})}\n\n"
+        if truncated_docs:
+            yield f"data: {json.dumps({'type': 'warning', 'content': f'{truncated_docs} documento(s) ignorado(s) por exceder o limite de contexto'})}\n\n"
 
         MAX_SAFETY_ITERATIONS = 10
         TARGET_SCORE = 80
