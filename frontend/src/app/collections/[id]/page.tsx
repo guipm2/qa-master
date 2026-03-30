@@ -45,6 +45,7 @@ export default function CollectionPage() {
     const [documents, setDocuments] = useState<RefDoc[]>([]);
     const [docRuns, setDocRuns] = useState<DocTestRun[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [fetchError, setFetchError] = useState<string | null>(null);
 
     /* runtime */
     const [isRunning, setIsRunning] = useState(false);
@@ -83,10 +84,14 @@ export default function CollectionPage() {
                 fetch(`${API}/api/collections/${id}/documents`).then(r => r.json()),
                 fetch(`${API}/api/collections/${id}/document-test-runs`).then(r => r.json()),
             ]);
+            setFetchError(null);
             setCollection(c); setRuns(r); setDocuments(d); setDocRuns(dr);
             if (r.length > 0) { setCurrentPrompt(r[r.length - 1].subject_instruction); setIteration(r.length); }
             else setCurrentPrompt(c.base_subject_instruction);
-        } catch (e) { console.error(e); } finally { setIsLoading(false); }
+        } catch (e) {
+            console.error(e);
+            setFetchError("Não foi possível carregar os dados. Verifique se o backend está rodando.");
+        } finally { setIsLoading(false); }
     }, [id]);
 
     useEffect(() => { if (id) fetchData(); }, [id, fetchData]);
@@ -97,11 +102,19 @@ export default function CollectionPage() {
     /* SSE */
     const processSSE = async (body: ReadableStream, handler: (e: SSE) => void) => {
         const reader = body.getReader(); const dec = new TextDecoder(); let buf = "";
-        while (true) {
-            const { done, value } = await reader.read(); if (done) break;
-            buf += dec.decode(value, { stream: true });
-            const parts = buf.split("\n\n"); buf = parts.pop() || "";
-            for (const p of parts) { if (p.startsWith("data: ")) try { const j = JSON.parse(p.slice(6)); if (j?.type) handler(j); } catch {} }
+        try {
+            while (true) {
+                const { done, value } = await reader.read(); if (done) break;
+                buf += dec.decode(value, { stream: true });
+                const parts = buf.split("\n\n"); buf = parts.pop() || "";
+                for (const p of parts) {
+                    if (p.startsWith("data: "))
+                        try { const j = JSON.parse(p.slice(6)); if (j?.type) handler(j); }
+                        catch (e) { console.warn("SSE parse error:", e, "raw:", p.slice(6, 120)); }
+                }
+            }
+        } finally {
+            reader.cancel().catch(() => {});
         }
     };
 
@@ -229,6 +242,17 @@ export default function CollectionPage() {
     const bestScore = Math.max(0, ...runs.map(r => r.score ?? 0), ...docRuns.map(r => r.score ?? 0));
     const isDoc = selected?._kind === "document";
     const evalResult = selected?.evaluation_result;
+
+    if (fetchError) return (
+        <main className="min-h-screen bg-black flex flex-col items-center justify-center gap-4 text-center px-4">
+            <AlertTriangle className="w-10 h-10 text-red-500" />
+            <p className="text-red-400 text-sm max-w-sm">{fetchError}</p>
+            <button onClick={() => { setFetchError(null); setIsLoading(true); fetchData(); }}
+                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-sm rounded-lg text-white">
+                Tentar novamente
+            </button>
+        </main>
+    );
 
     if (isLoading || !collection) return (
         <main className="min-h-screen bg-black flex items-center justify-center">
