@@ -527,7 +527,6 @@ async def run_smart_test(collection_id: str, background_tasks: Any = None):
 
     documents = get_collection_documents(collection_id)
     has_documents = len(documents) > 0
-    os.environ["OPENAI_API_KEY"] = collection.get("openai_api_key", "")
 
     session = TestSession(collection_id)
     _sessions[collection_id] = session
