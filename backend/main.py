@@ -107,6 +107,15 @@ def _get_session(collection_id: str) -> Optional[TestSession]:
     return _sessions.get(collection_id)
 
 
+def _validate_uuid(value: str, field: str = "id") -> str:
+    """Lança HTTP 400 se value não for um UUID v4 válido."""
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail=f"{field} inválido: formato UUID esperado")
+    return value
+
+
 async def _cleanup_sessions() -> None:
     """Remove sessões finalizadas mais antigas que SESSION_TTL_SECONDS."""
     while True:
@@ -235,6 +244,7 @@ def add_collection(data: CollectionCreate):
 
 @app.get("/api/collections/{collection_id}")
 def get_collection(collection_id: str):
+    _validate_uuid(collection_id, "collection_id")
     data = get_collection_by_id(collection_id)
     if not data:
         raise HTTPException(status_code=404, detail="Collection not found")
@@ -242,30 +252,34 @@ def get_collection(collection_id: str):
 
 @app.get("/api/collections/{collection_id}/runs")
 def list_collection_runs(collection_id: str):
+    _validate_uuid(collection_id, "collection_id")
     return get_collection_runs(collection_id)
 
 @app.delete("/api/test-runs/{run_id}")
 def delete_test_run_endpoint(run_id: str):
     """Remove um test run do banco."""
+    _validate_uuid(run_id, "run_id")
     delete_test_run(run_id)
     return {"message": "Test run removido"}
 
 @app.delete("/api/document-test-runs/{run_id}")
 def delete_document_test_run_endpoint(run_id: str):
     """Remove um document test run do banco."""
+    _validate_uuid(run_id, "run_id")
     delete_document_test_run(run_id)
     return {"message": "Document test run removido"}
 
 @app.put("/api/collections/{collection_id}")
 def update_collection_endpoint(collection_id: str, data: CollectionUpdate):
-    # Filter out None values
-    updates = {k: v for k, v in data.dict().items() if v is not None}
+    _validate_uuid(collection_id, "collection_id")
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No updates provided")
     return update_collection(collection_id, updates)
 
 @app.delete("/api/collections/{collection_id}")
 def delete_collection_endpoint(collection_id: str):
+    _validate_uuid(collection_id, "collection_id")
     delete_collection(collection_id)
     return {"message": "Collection deleted"}
 
@@ -500,6 +514,7 @@ async def run_optimization_stream(collection_id: str):
 @app.post("/api/collections/{collection_id}/stop")
 def stop_collection_run(collection_id: str):
     """Solicita parada do teste em andamento."""
+    _validate_uuid(collection_id, "collection_id")
     session = _get_session(collection_id)
     if session and not session.finished:
         session.request_stop()
@@ -510,6 +525,7 @@ def stop_collection_run(collection_id: str):
 @app.get("/api/collections/{collection_id}/test-status")
 def get_test_status(collection_id: str):
     """Retorna status do teste: running, finished, ou none."""
+    _validate_uuid(collection_id, "collection_id")
     session = _get_session(collection_id)
     if not session:
         return {"status": "none"}
@@ -818,6 +834,7 @@ def list_documents(collection_id: str):
 @app.delete("/api/documents/{document_id}")
 def remove_document(document_id: str):
     """Remove um documento de referência."""
+    _validate_uuid(document_id, "document_id")
     delete_reference_document(document_id)
     return {"message": "Documento removido"}
 
